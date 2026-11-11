@@ -1,0 +1,115 @@
+{
+  "name": "clawd-desktop-pet",
+  "productName": "Clawd",
+  "version": "2.0.0",
+  "description": "Claude Code 吉祥物 Clawd 的桌面小组件（像素桌宠）",
+  "main": "src/main/index.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
+  },
+  "devDependencies": {
+    "electron": "^44.10.0",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.clawd.desktoppet",
+    "productName": "Clawd",
+    "compression": "maximum",
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
+    "files": [
+      "src/**",
+      "assets/**",
+      "package.json",
+      "!preview.png",
+      "!README.md",
+      "!scripts/**",
+      "!node_modules/koffi/{src,doc,vendor,lib}/**",
+      "!node_modules/koffi/build/koffi/*/*.{lib,exp,pdb}",
+      "!node_modules/@anthropic-ai/sdk/src/**",
+      "!node_modules/@anthropic-ai/sdk/bin/**",
+      "!**/node_modules/**/*.{map,d.ts,d.mts,d.cts,mjs,md,markdown}",
+      "!**/node_modules/**/{CHANGELOG*,README*,docs,doc,test,tests,example,examples}"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "files": [
+        "!node_modules/koffi/build/koffi/!(win32_x64)/**"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Clawd",
+      "runAfterFinish": true,
+      "installerLanguages": [
+        "zh_CN"
+      ],
+      "language": "2052",
+      "artifactName": "Clawd-Setup-${version}.exe"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "assets/icon.png",
+      "category": "public.app-category.entertainment",
+      "extendInfo": {
+        "LSUIElement": true
+      },
+      "files": [
+        "!node_modules/koffi/build/koffi/!(darwin_x64|darwin_arm64)/**"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "assets/icon.png",
+      "files": [
+        "!node_modules/koffi/build/koffi/!(linux_x64)/**"
+      ]
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "nimgnus21",
+        "repo": "clawd",
+        "releaseType": "release"
+      }
+    ],
+    "asarUnpack": [
+      "node_modules/koffi/build/koffi/**/*.node"
+    ]
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "electron-updater": "^6.8.11",
+    "koffi": "^2.16.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nimgnus21/clawd.git"
+  }
+}

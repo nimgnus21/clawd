@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:">
+  <title>Clawd</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="stage">
+    <div id="bubble" class="hidden"><span id="bubble-glyph"></span><span id="bubble-text"></span><span id="bubble-dim"></span></div>
+    <div id="clock" class="hidden"><span id="clock-week"></span><span id="clock-h"></span><span id="clock-colon">:</span><span id="clock-m"></span></div>
+    <div id="pet"><canvas id="hat"></canvas><canvas id="sprite"></canvas><canvas id="prop"></canvas></div>
+    <div id="fx"></div>
+  </div>
+  <script src="sprite.js"></script>
+  <script src="outfits.js"></script>
+  <script src="lines.js"></script>
+  <script src="ui.js"></script>
+  <script src="pet.js"></script>
+</body>
+</html>

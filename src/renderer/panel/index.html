@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'">
+  <title>Clawd 控制面板</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <aside id="side">
+    <div id="brand"><canvas id="logo" width="64" height="40"></canvas><div><b>Clawd</b><span id="version"></span></div></div>
+    <nav id="nav"></nav>
+  </aside>
+  <main id="main">
+    <header id="head"><h1 id="title"></h1><p id="subtitle"></p></header>
+    <div id="content"></div>
+  </main>
+  <div id="toast" class="hidden"></div>
+  <script src="../pet/sprite.js"></script>
+  <script src="../pet/outfits.js"></script>
+  <script src="panel.js"></script>
+  <script src="tabs-core.js"></script>
+  <script src="tabs-todo.js"></script>
+  <script src="tabs-growth.js"></script>
+  <script src="tabs-stats.js"></script>
+  <script src="tabs-chat.js"></script>
+</body>
+</html>
