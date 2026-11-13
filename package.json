@@ -33,8 +33,6 @@
       "!scripts/**",
       "!node_modules/koffi/{src,doc,vendor,lib}/**",
       "!node_modules/koffi/build/koffi/*/*.{lib,exp,pdb}",
-      "!node_modules/@anthropic-ai/sdk/src/**",
-      "!node_modules/@anthropic-ai/sdk/bin/**",
       "!**/node_modules/**/*.{map,d.ts,d.mts,d.cts,mjs,md,markdown}",
       "!**/node_modules/**/{CHANGELOG*,README*,docs,doc,test,tests,example,examples}"
     ],
@@ -104,7 +102,6 @@
     ]
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^1.8.0",
     "electron-updater": "^6.8.11",
     "koffi": "^2.16.3"
   },

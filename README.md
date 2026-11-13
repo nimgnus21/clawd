@@ -59,18 +59,7 @@
 - **爬窗口**（仅 Windows）：散步时能站到其他窗口顶上、偶尔跳上去，拖动窗口时跟着走，窗口关了就掉下来
 - **电脑状态**：电量低提醒、CPU 一直很忙时流汗、内存快满提醒
 - **统计**：每天喝水、专注、活动、护眼、Claude Code 任务、完成待办的图表（7 / 30 天）和表格
-- **和 Clawd 聊天**：用 Claude API（需要你自己的 API key，见下面）
 - **自动更新**：从 GitHub Releases 检查新版本（需要设置仓库，见下面）
-
-## 和 Clawd 聊天
-
-控制面板 →「聊天」→ 填入你的 Anthropic API key（在 console.anthropic.com 创建）。
-
-- key 用系统加密（Windows DPAPI）存在本机，只用来调 Claude API
-- 默认模型 Claude Opus 5.5，可以换成更便宜的 Sonnet 5.5 / Haiku 5.5
-- 用的是低思考强度（回得快、省钱）；Opus / Sonnet 开了「被拒答时自动换模型重试」
-- 聊天会按你的 API 用量计费；对话里会附带今天喝水、待办等状态，方便 Clawd 回答
-- 设置了环境变量 `ANTHROPIC_API_KEY`，或者用 `ant auth login` 登录过，不填 key 也能用
 
 ## 自动更新
 
@@ -100,7 +89,7 @@ npx electron-builder --win --publish always
 
 - 设置、统计、待办都存在本机：`%APPDATA%\Clawd\`（`settings.json`、`data.json`，日志 `clawd.log`）
 - Claude Code 联动只在本机传递，服务只监听 `127.0.0.1`，需要安装时生成的口令
-- 只有「聊天」会把内容发给 Anthropic 的 Claude API；「自动更新」只访问 GitHub 上的发布仓库（默认 nimgnus21/clawd）
+- 唯一会联网的是「自动更新」：只访问 GitHub 上的发布仓库（默认 nimgnus21/clawd）
 
 ## 从源码运行 / 打包
 
@@ -136,7 +125,6 @@ npm run dist:linux   # Linux：.AppImage
 | 行为、动作 | `src/renderer/pet/pet.js` |
 | 默认设置 | `src/main/config.js` |
 | 经验值、解锁等级 | `src/main/progress.js` |
-| 聊天人设、模型 | `src/main/chat.js` |
 
 ## 文件结构
 
@@ -150,7 +138,6 @@ src/main/           主进程
   todos.js            待办
   dnd.js              勿扰
   claude-code.js      Claude Code hooks 服务 + 一键接入
-  chat.js             Claude API 聊天
   progress.js         经验、等级、心情
   stats.js            每日统计
   sysmon.js           CPU / 内存

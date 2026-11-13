@@ -892,7 +892,6 @@
   // 气泡里常驻显示的内容：Claude Code 等确认 > 提醒 > Claude Code 工作中 > 专注倒计时
   bubble.setPersistent((now) => {
     const top = S.cc.top;
-    if (S.chatThinking) return { glyph: bubble.spinnerGlyph(now), text: 'Thinking…' };
     if (ccWaiting()) {
       return { glyph: '!', text: top.message || 'Claude Code 等你确认', dim: top.project };
     }
@@ -1085,25 +1084,6 @@
   api.on('todo', onTodo);
   api.on('sys', onSys);
   // 升级公告：等手上这句话说完再宣布（比如喝水时升级，先说“咕嘟咕嘟”）
-  // 聊天：想的时候转圈，回复显示在气泡里（太长就只显示开头）
-  api.on('chat', (d = {}) => {
-    if (d.kind === 'start') {
-      if (S.mode === 'sleep') wakeUp();
-      S.chatThinking = true;
-      bubble.hush();
-      return;
-    }
-    S.chatThinking = false;
-    const t = String(d.text || '').replace(/\s+/g, ' ').trim();
-    const short = t.length > 70 ? `${t.slice(0, 68)}…（完整的在面板里）` : t;
-    if (d.kind === 'done') {
-      setMode('react', 650);
-      bubble.say(short, Math.min(14000, 3000 + short.length * 140));
-    } else {
-      S.wideUntil = performance.now() + 900;
-      bubble.say(short, 5000);
-    }
-  });
   api.on('levelup', (d = {}) => {
     const extra = d.unlocked && d.unlocked.length ? ` 解锁了：${d.unlocked.join('、')}` : '';
     S.announce = { text: `升级啦！Lv.${d.level} ✦${extra}`, notBefore: performance.now() + 800 };

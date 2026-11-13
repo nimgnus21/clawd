@@ -50,6 +50,7 @@ function migrateSettings(s, raw) {
   s.reminders = { ...SETTINGS_DEFAULTS.reminders, ...(s.reminders || {}) };
   delete s.water;
   delete s.waterLog; // 搬到 data.json 里了
+  delete s.chat; // 2.1 起没有聊天功能了，顺手删掉以前存的 API key
   s.version = SETTINGS_DEFAULTS.version;
 }
 

@@ -7,5 +7,4 @@ contextBridge.exposeInMainWorld('panel', {
   action: (name, ...args) => ipcRenderer.invoke('panel:action', name, args),
   onState: (fn) => ipcRenderer.on('panel:state', (_e, state) => fn(state)),
   onNav: (fn) => ipcRenderer.on('panel:nav', (_e, tab) => fn(tab)),
-  onChatDelta: (fn) => ipcRenderer.on('panel:chat-delta', (_e, d) => fn(d)),
 });

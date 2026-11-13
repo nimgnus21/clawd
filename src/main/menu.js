@@ -142,7 +142,6 @@ class Menus {
     const template = [
       ...todoItems,
       { label: '控制面板…', click: () => actions.openPanel() },
-      { label: '和 Clawd 聊天…', click: () => actions.openPanel('chat') },
       { label: `待办${this.todos.open().length ? `（${this.todos.open().length}）` : ''}…`, click: () => actions.openPanel('todo') },
       { type: 'separator' },
       { label: '摸摸头', click: () => send('pet') },

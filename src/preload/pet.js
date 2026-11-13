@@ -1,7 +1,7 @@
 // 小人页面的 preload：只把需要的几个能力安全地暴露给页面
 const { contextBridge, ipcRenderer } = require('electron');
 
-const CHANNELS = ['tick', 'settings', 'menu', 'falling', 'landed', 'reminder', 'cc', 'say', 'quiet', 'todo', 'sys', 'levelup', 'jumping', 'chat'];
+const CHANNELS = ['tick', 'settings', 'menu', 'falling', 'landed', 'reminder', 'cc', 'say', 'quiet', 'todo', 'sys', 'levelup', 'jumping'];
 
 contextBridge.exposeInMainWorld('clawd', {
   platform: process.platform,

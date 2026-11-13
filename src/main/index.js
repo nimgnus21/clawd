@@ -13,7 +13,6 @@ const { Dnd } = require('./dnd');
 const { Todos } = require('./todos');
 const { SysMon } = require('./sysmon');
 const { Progress, UNLOCKS } = require('./progress');
-const { Chat, MODELS } = require('./chat');
 const { Updater, fakeAutoUpdater } = require('./updater');
 const winapi = require('./winapi');
 const log = require('./log');
@@ -40,7 +39,6 @@ let dnd;
 let todos;
 let sysmon;
 let progress;
-let chat;
 let updater;
 let hiddenByDnd = false;
 let idleOverride = null; // 测试用：假装系统空闲了多少秒
@@ -191,24 +189,6 @@ const actions = {
   todoSnooze(id, minutes = 10) {
     todos.snooze(id, minutes);
   },
-  // ---- 聊天 ----
-  chatSend(text) {
-    return chat.send(text);
-  },
-  chatReset() {
-    chat.reset();
-  },
-  chatSetKey(key) {
-    return chat.setKey(key);
-  },
-  chatClearKey() {
-    return chat.clearKey();
-  },
-  chatSetModel(model) {
-    if (!MODELS[model]) return { error: '不认识这个模型' };
-    chat.setConfig({ model });
-    return { ok: true };
-  },
   // ---- 更新 ----
   updateCheck() {
     return updater.check();
@@ -222,9 +202,6 @@ const actions = {
   openReleases() {
     const { repo } = updater.config();
     if (repo) shell.openExternal(`https://github.com/${repo}/releases`);
-  },
-  openKeyPage() {
-    shell.openExternal('https://console.anthropic.com/settings/keys');
   },
   // ---- 勿扰 ----
   dndManual(minutes) {
@@ -262,7 +239,7 @@ function applyDnd(st) {
 // ---------------- 控制面板要显示的数据 ----------------
 function panelState() {
   const all = settings.all();
-  const safe = { ...all, claudeCode: { ...(all.claudeCode || {}), token: undefined }, chat: undefined };
+  const safe = { ...all, claudeCode: { ...(all.claudeCode || {}), token: undefined } };
   return {
     version: app.getVersion(),
     platform: process.platform,
@@ -278,7 +255,6 @@ function panelState() {
     progress: progress.status(),
     unlocks: UNLOCKS,
     history: stats.lastDays(30),
-    chat: chat.status(),
     update: updater.status(),
     petVisible: pet.isVisible(),
     dataDir: app.getPath('userData'),
@@ -413,21 +389,6 @@ function wireProgress() {
   if (away > 12) pet.once('loaded', () => setTimeout(() => pet.send('say', '好久不见！想你了～'), 6500));
 }
 
-// ---------------- 聊天 ----------------
-// 每轮对话附带一条“当前情况”，让 Clawd 能回答“我今天喝了几杯水”之类的问题
-function chatContext() {
-  const d = new Date();
-  const p = progress.status();
-  const open = todos.open();
-  const firstTodos = open.slice(0, 3).map((t) => `「${t.text}」`).join('、');
-  return [
-    `当前情况（应用自动提供，不是用户说的）：现在是 ${d.getMonth() + 1}月${d.getDate()}日 ${config.pad2(d.getHours())}:${config.pad2(d.getMinutes())}。`,
-    `用户今天喝了 ${stats.get('water')}/${settings.get('waterGoal')} 杯水，起来活动 ${stats.get('sitBreaks')} 次，专注 ${stats.get('focusMinutes')} 分钟，Claude Code 完成 ${stats.get('ccTasks')} 个任务。`,
-    open.length ? `还有 ${open.length} 件待办，比如${firstTodos}。` : '待办都做完了。',
-    `你（Clawd）现在 Lv.${p.level}，心情 ${p.mood}/100。`,
-  ].join('');
-}
-
 function wireUpdater() {
   updater.on('state', () => panel.push());
   updater.on('ready', (version) => {
@@ -436,17 +397,6 @@ function wireUpdater() {
   });
   updater.configure();
   updater.start();
-}
-
-function wireChat() {
-  chat.on('start', () => pet.send('chat', { kind: 'start' }));
-  chat.on('delta', (d) => panel.send('panel:chat-delta', d));
-  chat.on('done', (d) => {
-    pet.send('chat', { kind: 'done', text: d.text });
-    progress.gain('pet');
-  });
-  chat.on('error', (d) => pet.send('chat', { kind: 'error', text: d.message }));
-  chat.on('update', () => panel.push());
 }
 
 // ---------------- 其他页面请求 ----------------
@@ -512,7 +462,6 @@ function start() {
   dnd = new Dnd(settings, () => [pet.win, panel.win].filter((w) => w && !w.isDestroyed()).map((w) => winapi.hwndOf(w)));
   todos = new Todos(data, stats);
   progress = new Progress(data);
-  chat = new Chat(settings, chatContext);
   updater = new Updater(settings, process.env.CLAWD_TEST && process.env.CLAWD_FAKE_UPDATER ? fakeAutoUpdater(process.env.CLAWD_FAKE_UPDATER) : null);
   sysmon = new SysMon();
   sysmon.on('sample', (smp) => {
@@ -526,7 +475,6 @@ function start() {
   wireClaudeCode();
   wireTodos();
   wireProgress();
-  wireChat();
   wireUpdater();
   settings.on('change', onSettingsChange);
   pet.on('loaded', sendSettings);
@@ -562,7 +510,7 @@ function start() {
   // 自动化测试用：只有设置了 CLAWD_TEST 环境变量才会暴露
   if (process.env.CLAWD_TEST) {
     globalThis.__clawd = {
-      actions, settings, data, stats, pet, reminders, menus, cc, panel, panelState, dnd, winapi, todos, sysmon, progress, chat, updater,
+      actions, settings, data, stats, pet, reminders, menus, cc, panel, panelState, dnd, winapi, todos, sysmon, progress, updater,
       setIdle: (n) => { idleOverride = n; },
     };
   }
