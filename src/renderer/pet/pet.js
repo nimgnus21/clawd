@@ -19,6 +19,8 @@
   const propCtx = propEl.getContext('2d');
   const hatEl = document.getElementById('hat');
   const hatCtx = hatEl.getContext('2d');
+  const giftEl = document.getElementById('gift');
+  const giftCtx = giftEl.getContext('2d');
   const { outfits } = C;
 
   let scale = 7;
@@ -45,6 +47,14 @@
     hatEl.height = Math.round(outfits.HAT_H * scale * dpr);
     hatEl.style.width = `${outfits.HAT_W * scale}px`;
     hatEl.style.height = `${outfits.HAT_H * scale}px`;
+    // 礼物盒比小人小一点
+    const gs = Math.max(3, Math.round(scale * 0.75));
+    giftEl.width = Math.round(sprite.GIFT_W * gs * dpr);
+    giftEl.height = Math.round(sprite.GIFT_H * gs * dpr);
+    giftEl.style.width = `${sprite.GIFT_W * gs}px`;
+    giftEl.style.height = `${sprite.GIFT_H * gs}px`;
+    root.style.setProperty('--gw', `${sprite.GIFT_W * gs}px`);
+    lastGiftKey = '';
     lastPoseKey = '';
     lastPropKey = '';
     lastHatKey = '';
@@ -104,27 +114,48 @@
     return f.line;
   }
 
-  function draw(pose) {
-    const key = JSON.stringify(pose);
-    if (key === lastPoseKey) return;
-    lastPoseKey = key;
-    sprite.paint(ctx, sprite.GRID_W, sprite.GRID_H, sprite.pixels(pose));
+  // 当前皮肤（小卖部买的 / 打卡和成就解锁的）
+  function skinId() {
+    const g = S.settings.growth || {};
+    return g.skin && sprite.SKINS[g.skin] ? g.skin : 'classic';
   }
 
-  // prop: null（不拿东西）或 { level, bottom }，bottom 以像素格为单位
+  function draw(pose) {
+    const p = { ...pose, skin: skinId() };
+    const key = JSON.stringify(p);
+    if (key === lastPoseKey) return;
+    lastPoseKey = key;
+    sprite.paint(ctx, sprite.GRID_W, sprite.GRID_H, sprite.pixels(p));
+  }
+
+  // prop: null（不拿东西）、水杯 { level, bottom } 或零食 { snack, bites, bottom }，bottom 以像素格为单位
   function drawProp(prop) {
-    const key = prop ? `${prop.level}|${prop.bottom}` : 'none';
+    const key = prop ? `${prop.snack || 'cup'}|${prop.snack ? prop.bites : prop.level}|${prop.bottom}` : 'none';
     if (key === lastPropKey) return;
     lastPropKey = key;
     propEl.classList.toggle('show', !!prop);
     if (!prop) return;
     propEl.style.bottom = `${prop.bottom * scale}px`;
-    sprite.paint(propCtx, sprite.CUP_W, sprite.CUP_H, sprite.cupPixels(prop.level));
+    sprite.paint(propCtx, sprite.CUP_W, sprite.CUP_H, prop.snack ? sprite.snackPixels(prop.snack, prop.bites) : sprite.cupPixels(prop.level));
+  }
+
+  // 礼物盒：放在小人左边的地上
+  let lastGiftKey = '';
+  function drawGift() {
+    const show = !!S.gift && !S.walking && ['idle', 'react', 'dance', 'sit', 'sleep', 'eat', 'wave'].includes(S.mode);
+    const open = !!S.giftOpening;
+    const key = `${show}|${open}`;
+    if (key === lastGiftKey) return;
+    lastGiftKey = key;
+    giftEl.classList.toggle('show', show);
+    giftEl.classList.toggle('opening', open);
+    if (show) sprite.paint(giftCtx, sprite.GIFT_W, sprite.GIFT_H, sprite.giftPixels(open));
   }
 
   // ================= 状态 =================
   const SLEEP_AFTER_S = 90; // 电脑空闲多久后睡觉
-  const TIMED_MODES = ['react', 'dance', 'drink', 'stretch', 'yawn', 'wave', 'sit', 'sulk']; // 到时间自动回到 idle 的模式
+  const TIMED_MODES = ['react', 'dance', 'drink', 'stretch', 'yawn', 'wave', 'sit', 'sulk', 'eat']; // 到时间自动回到 idle 的模式
+  const EAT_MS = 2600;
   const IDLE_ACTS = ['yawn', 'wave', 'sit', 'sulk']; // 闲着时的小动作：有正事就马上停
   const EYE_REST_MS = 20000;
 
@@ -353,6 +384,13 @@
       const wasWaiting = ccWaiting();
       S.cc = { active: d.active || 0, top: d.top || null };
       if (ccWaiting() && !wasWaiting) {
+        // 正在庆祝（任务、成就…）：先让位给“等你批准”，庆祝放回队列，批准完再说
+        if (S.announcing && performance.now() < S.announcing.until) {
+          bubble.hush();
+          S.announces.unshift({ ...S.announcing.a, notBefore: 0 });
+          if (S.mode === 'dance') setMode('idle');
+        }
+        S.announcing = null;
         if (S.mode === 'sleep') wakeUp();
         S.wideUntil = performance.now() + 900;
         S.ccLastNag = performance.now();
@@ -730,13 +768,7 @@
 
     checkChime();
     nagReminders(now);
-    if (S.announce && now > S.announce.notBefore && !bubble.busy() && ['idle', 'react', 'dance', 'sleep', 'sit'].includes(S.mode)) {
-      if (S.mode === 'sleep') wakeUp();
-      dance(3200);
-      bubble.say(S.announce.text, 6000);
-      for (let i = 0; i < 6; i++) setTimeout(() => particle('✦', 'spark', rand(0.05, 0.95)), i * 160);
-      S.announce = null;
-    }
+    playAnnouncement(now);
     nagClaudeCode(now);
 
     // 睡觉 / 醒来（专注时、Claude Code 干活时不睡）
@@ -806,6 +838,11 @@
         return { eyes: 'happy', blush: true, armL: 'up', armR: 'up' };
       case 'drink':
         return { eyes: 'happy', blush: true, look: 1, armR: 'up' };
+      case 'eat': {
+        // 啊呜啊呜：嘴一张一合
+        const f = Math.floor(now / 230) % 2;
+        return { eyes: 'happy', blush: true, look: 1, armR: 'mid', mouth: f ? 'o' : 'small', squish: f === 1 };
+      }
       case 'stretch': {
         const f = Math.floor(now / 600) % 2;
         return { eyes: f ? 'closed' : 'happy', armL: 'up', armR: 'up', squish: false };
@@ -880,6 +917,10 @@
 
   // 手里的水杯：提醒时拿在身边，喝水时举高、水位慢慢下降
   function currentProp(now, pose) {
+    if (S.mode === 'eat' && S.eating) {
+      const t = 1 - Math.max(0, S.modeUntil - now) / EAT_MS;
+      return { snack: S.eating.id, bites: Math.min(3, Math.floor(t * 4)), bottom: 3 };
+    }
     if (S.mode === 'drink') {
       const t = 1 - Math.max(0, S.modeUntil - now) / DRINK_MS;
       return { level: Math.max(0, 3 - Math.floor(t * 4)), bottom: 5 };
@@ -1029,7 +1070,8 @@
     return inRect(petEl.getBoundingClientRect(), x, y, 3)
       || (bubble.visible && inRect(bubble.el.getBoundingClientRect(), x, y, 2))
       || (!clock.el.classList.contains('hidden') && inRect(clock.el.getBoundingClientRect(), x, y, 2))
-      || (propEl.classList.contains('show') && inRect(propEl.getBoundingClientRect(), x, y, 2));
+      || (propEl.classList.contains('show') && inRect(propEl.getBoundingClientRect(), x, y, 2))
+      || (giftEl.classList.contains('show') && inRect(giftEl.getBoundingClientRect(), x, y, 3));
   }
 
   window.addEventListener('mousemove', (e) => {
@@ -1068,6 +1110,109 @@
     if (wasWalk && !S.settings.walk) S.walking = false;
   }
 
+  // ================= 成长：公告队列 =================
+  // 几件好事同时发生（任务完成 + 打卡 + 宝箱）时一句一句说，不互相顶掉
+  S.announces = [];
+  function announce(text, { celebrate = false, delay = 800, ms = 5200, glyph = '' } = {}) {
+    S.announces.push({ text, celebrate, ms, glyph, notBefore: performance.now() + delay });
+  }
+
+  function playAnnouncement(now) {
+    const a = S.announces[0];
+    // Claude Code 等你批准时不抢气泡，批准完再庆祝
+    if (!a || now < a.notBefore || bubble.busy() || ccWaiting()) return;
+    if (!['idle', 'react', 'dance', 'sleep', 'sit', 'wave', 'yawn', 'stretch', 'sulk'].includes(S.mode) || S.walking) return;
+    if (S.mode === 'sleep') wakeUp();
+    S.announces.shift();
+    S.announcing = { a, until: now + a.ms };
+    if (a.celebrate) {
+      dance(3000);
+      for (let i = 0; i < 6; i++) setTimeout(() => particle('✦', 'spark', rand(0.05, 0.95)), i * 160);
+    } else {
+      setMode('react', 650);
+    }
+    bubble.say(a.glyph ? `${a.glyph} ${a.text}` : a.text, a.ms);
+    // 下一句至少隔一会儿
+    if (S.announces[0]) S.announces[0].notBefore = Math.max(S.announces[0].notBefore, now + a.ms + 600);
+  }
+
+  const SNACK_EMOJI = { cookie: '🍪', fish: '🐟', pudding: '🍮', cake: '🍰' };
+  const SNACK_NAME = { cookie: '饼干', fish: '小鱼干', pudding: '布丁', cake: '蛋糕' };
+
+  function eat(d) {
+    if (S.mode === 'sleep') wakeUp();
+    S.eating = { id: d.id, favorite: !!d.favorite };
+    setMode('eat', EAT_MS);
+    bubble.say(d.favorite ? `是${d.name || SNACK_NAME[d.id]}！今天最想吃的就是这个 💕` : `啊呜——${d.name || SNACK_NAME[d.id]}好好吃！`, 3200);
+    const n = d.favorite ? 6 : 3;
+    for (let i = 0; i < n; i++) setTimeout(() => particle('♥', 'heart', rand(0.3, 0.9)), 300 + i * 260);
+  }
+
+  function onGrowth(ev = {}) {
+    switch (ev.type) {
+      case 'welcome': {
+        let t = `成长系统升级啦！每天 3 个小任务、连续打卡 🔥、小卖部和成就。送你 ${ev.stars}✦ 和一块饼干 🍪，右键喂我吧～`;
+        if (ev.achievements) t += `\n以前的努力也算数：解锁了 ${ev.achievements} 个成就（+${ev.achievementStars}✦）`;
+        announce(t, { celebrate: true, delay: 5600, ms: 9000 });
+        break;
+      }
+      case 'morning': {
+        const lines = [];
+        if (ev.note && ev.note.kind === 'broken' && ev.note.was > 1) lines.push(`之前连续打卡 ${ev.note.was} 天断掉了…没关系，今天重新开始 💪`);
+        if (ev.note && ev.note.kind === 'freeze') lines.push(`用掉 ${ev.note.used} 张补签卡，🔥${ev.note.streak} 天保住啦！`);
+        lines.push(`今天的任务：${(ev.quests || []).join('、')}`);
+        if (ev.streak) lines.push(`🔥 已经连续 ${ev.streak} 天，完成 2 个任务就能续上`);
+        announce(lines.join('\n'), { delay: 300, ms: 8000, glyph: '☀' });
+        break;
+      }
+      case 'quest':
+        announce(`任务完成：${ev.title}　+${ev.stars}✦${ev.left ? `（还剩 ${ev.left} 个）` : ''}`, { glyph: '✓', delay: 1200, ms: 4200 });
+        break;
+      case 'checkin': {
+        let t = `今天打卡成功！🔥 连续 ${ev.streak} 天`;
+        if (ev.milestone) t += `\n连续 ${ev.milestone.days} 天的奖励：${ev.milestone.stars}✦${ev.milestone.skin === 'gold' ? '，还解锁了金色皮肤！' : ''}`;
+        if (ev.freeze) t += '\n攒到一张补签卡 🎫 偶尔忘了也不怕';
+        announce(t, { celebrate: true, ms: 6000 });
+        break;
+      }
+      case 'chest':
+        announce(`三个任务全部完成！🧰 宝箱里有 ${ev.stars}✦ 和一个${SNACK_EMOJI[ev.snack] || ''}${SNACK_NAME[ev.snack] || ''}`, { celebrate: true, ms: 6000 });
+        break;
+      case 'achievement':
+        announce(`成就解锁 ${ev.icon}「${ev.name}」　+${ev.stars}✦`, { celebrate: true, ms: 5000 });
+        break;
+      case 'skin':
+        announce(`解锁新皮肤：${ev.name} ✨ 去衣柜换上试试`, { celebrate: true });
+        break;
+      case 'feed':
+        eat(ev);
+        break;
+      case 'gift':
+        announce(`礼物里是：${ev.reward && ev.reward.text}！`, { celebrate: true, delay: 900, glyph: '🎁' });
+        break;
+      case 'bought':
+        announce(ev.kind === 'skin' ? `换上${ev.name}啦，好看吗？` : `谢谢！${ev.name}我很喜欢 💕`, { delay: 200, ms: 3500 });
+        break;
+      default:
+        break;
+    }
+  }
+
+  async function openGift() {
+    if (!S.gift || S.giftOpening) return;
+    S.giftOpening = true;
+    bump('jump');
+    for (let i = 0; i < 6; i++) setTimeout(() => particle('✦', 'spark', rand(-0.3, 0.2)), i * 120);
+    let r = {};
+    try { r = (await api.openGift()) || {}; } catch { /* 忽略 */ }
+    setTimeout(() => {
+      S.giftOpening = false;
+      S.gift = false;
+    }, 1400);
+    if (r.error) bubble.say(r.error, 2500);
+  }
+  giftEl.addEventListener('click', openGift);
+
   function onMenu(cmd) {
     if (cmd === 'pet') petHead();
     else if (cmd === 'dance') danceForYou();
@@ -1086,7 +1231,13 @@
   // 升级公告：等手上这句话说完再宣布（比如喝水时升级，先说“咕嘟咕嘟”）
   api.on('levelup', (d = {}) => {
     const extra = d.unlocked && d.unlocked.length ? ` 解锁了：${d.unlocked.join('、')}` : '';
-    S.announce = { text: `升级啦！Lv.${d.level} ✦${extra}`, notBefore: performance.now() + 800 };
+    announce(`升级啦！Lv.${d.level} ✦${extra}`, { celebrate: true });
+  });
+  api.on('growth', onGrowth);
+  api.on('gift', (d = {}) => {
+    const was = S.gift;
+    S.gift = !!d.show;
+    if (S.gift && !was && !d.quiet) announce('咦，地上有个礼物 🎁 点一下拆开看看！', { glyph: '🎁', delay: 400 });
   });
   // 勿扰的“安静”模式：变淡、不说话
   api.on('quiet', (on) => document.body.classList.toggle('quiet', !!on));
@@ -1126,8 +1277,9 @@
     draw(pose);
     drawHat(outfit.hat, pose);
     drawProp(currentProp(now, pose));
+    drawGift();
     bubble.render(now);
-    clock.render(S.settings.clock !== false);
+    clock.render(S.settings.clock !== false, (S.settings.growth || {}).streak || 0);
     requestAnimationFrame(loop);
   }
 
@@ -1173,6 +1325,9 @@
     danceForYou,
     onWater: (d = {}) => onReminder({ kind: 'water', ...d }),
     drink,
+    onGrowth,
+    openGift,
+    skinId,
   };
 
   // ================= 浏览器预览用的假 API =================
@@ -1194,6 +1349,7 @@
       getSettings: async () => ({ size: 'medium', scale: 7, walk: false, onTop: true, clock: true, chime: true, sysAlerts: true, festival: true, birthday: '', outfit: { hat: 'none', face: 'none' } }),
       reminderDone: async () => ({ count: 1, goal: 8 }),
       todoDone: async () => ({ ok: true, left: 0 }),
+      openGift: async () => ({ ok: true, reward: { text: '20✦' } }),
       on(ch, fn) { (listeners[ch] = listeners[ch] || []).push(fn); },
       emit,
     };

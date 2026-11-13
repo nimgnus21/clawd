@@ -117,6 +117,28 @@ class Menus {
     }];
   }
 
+  // 喂零食：列出手上有的零食
+  feedMenu() {
+    const { SNACKS } = require('./growth-catalog'); // eslint-disable-line global-require
+    const g = this.growth.raw();
+    const fav = this.growth.favoriteSnack();
+    const have = SNACKS.filter((s) => (g.snacks[s.id] || 0) > 0);
+    const items = have.map((s) => ({
+      label: `${s.emoji} ${s.name} ×${g.snacks[s.id]}${s.id === fav ? '（今天最爱）' : ''}`,
+      click: () => this.actions.growthFeed(s.id),
+    }));
+    if (!items.length) items.push({ label: '没有零食了', enabled: false });
+    items.push({ type: 'separator' }, { label: `去小卖部（${g.stars}✦）…`, click: () => this.actions.openPanel('shop') });
+    return { label: '喂零食', submenu: items };
+  }
+
+  growthLabel() {
+    const v = this.growth.summary();
+    const q = this.growth.questProgress();
+    const done = q.filter((x) => x.done).length;
+    return `今日任务 ${done}/${q.length}${v.streak ? `　🔥${v.streak}` : ''}…`;
+  }
+
   // state 来自页面：{ focusing, focusLeft }
   popupPet(state = {}) {
     if (!this.pet.alive()) return;
@@ -146,6 +168,8 @@ class Menus {
       { type: 'separator' },
       { label: '摸摸头', click: () => send('pet') },
       { label: '跳个舞', click: () => send('dance') },
+      this.feedMenu(),
+      { label: this.growthLabel(), click: () => actions.openPanel('growth') },
       { type: 'separator' },
       this.claudeCodeMenu(),
       this.remindersMenu(),

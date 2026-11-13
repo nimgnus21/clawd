@@ -86,12 +86,16 @@
   const clockH = $('clock-h');
   const clockColon = $('clock-colon');
   const clockM = $('clock-m');
+  const clockStreak = $('clock-streak');
   let clockSig = '';
+  let streakNow = 0;
 
-  function renderClock(enabled) {
+  // streak：连续打卡天数，显示成时钟后面的 🔥N
+  function renderClock(enabled, streak = 0) {
     const d = new Date();
     const show = enabled && !B.visible;
-    const sig = `${show}|${d.getDay()}|${d.getHours()}|${d.getMinutes()}|${d.getSeconds() % 2}`;
+    streakNow = streak;
+    const sig = `${show}|${d.getDay()}|${d.getHours()}|${d.getMinutes()}|${d.getSeconds() % 2}|${streak}`;
     if (sig === clockSig) return;
     clockSig = sig;
     clockEl.classList.toggle('hidden', !show);
@@ -99,11 +103,13 @@
     clockH.textContent = pad2(d.getHours());
     clockM.textContent = pad2(d.getMinutes());
     clockColon.classList.toggle('off', d.getSeconds() % 2 === 1);
+    clockStreak.textContent = streak > 0 ? `🔥${streak}` : '';
   }
 
   clockEl.addEventListener('click', () => {
     const d = new Date();
-    say(`${d.getMonth() + 1}月${d.getDate()}日 ${WEEK[d.getDay()]} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`, 3500);
+    const st = streakNow > 0 ? `　🔥连续打卡 ${streakNow} 天` : '';
+    say(`${d.getMonth() + 1}月${d.getDate()}日 ${WEEK[d.getDay()]} ${pad2(d.getHours())}:${pad2(d.getMinutes())}${st}`, 3500);
   });
 
   // ================= 飘字 =================

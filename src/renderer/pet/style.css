@@ -120,6 +120,7 @@ html, body {
   text-align: center;
 }
 #bubble-glyph:empty { display: none; }
+#bubble-text { white-space: pre-line; }
 #bubble-dim {
   margin-left: 8px;
   color: var(--muted);
@@ -146,6 +147,32 @@ html, body {
 #clock.hidden { opacity: 0; pointer-events: none; }
 #clock-week { color: var(--muted); font-weight: 400; margin-right: 6px; }
 #clock-colon.off { opacity: .25; }
+#clock-streak { margin-left: 6px; color: #F2C14E; font-weight: 600; }
+#clock-streak:empty { display: none; }
+
+/* ---------- 每日礼物盒 ---------- */
+#gift {
+  position: absolute;
+  left: calc(50% - var(--pw) / 2 - var(--gw, 30px) - 4px);
+  bottom: 0;
+  display: none;
+  image-rendering: pixelated;
+  cursor: pointer;
+  transform-origin: 50% 100%;
+  animation: giftBob 1.6s ease-in-out infinite;
+}
+#gift.show { display: block; }
+#gift.opening { animation: giftPop .5s ease-out; }
+@keyframes giftBob {
+  0%, 70%, 100% { transform: translateY(0) rotate(0); }
+  78% { transform: translateY(-3px) rotate(-6deg); }
+  86% { transform: translateY(-3px) rotate(6deg); }
+}
+@keyframes giftPop {
+  0% { transform: scale(1, 1); }
+  40% { transform: scale(1.25, .8); }
+  100% { transform: scale(1, 1); }
+}
 
 /* ---------- 头顶的帽子 ---------- */
 #hat {
@@ -198,5 +225,6 @@ html, body {
 /* ---------- 勿扰：安静模式 ---------- */
 body.quiet #bubble,
 body.quiet #clock,
-body.quiet #fx { display: none; }
+body.quiet #fx,
+body.quiet #gift { display: none; }
 body.quiet #pet { opacity: .35; }

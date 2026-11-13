@@ -25,6 +25,7 @@ const SETTINGS_DEFAULTS = {
   festival: true, // 节日自动换装
   birthday: '', // 生日 'MM-DD'，那天戴派对帽
   outfit: { hat: 'none', face: 'none' }, // 衣柜里选的配饰
+  growth: { weekendRest: true, morning: true, gift: true }, // 周末休息不断签、早安播报、每日礼物
   x: null,
   y: null,
 };

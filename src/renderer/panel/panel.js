@@ -36,6 +36,10 @@
     chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/>',
     moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/>',
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
+    shirt: '<path d="M8 3 3.5 6l2 4.2L8 9v12h8V9l2.5 1.2 2-4.2L16 3a4 4 0 0 1-8 0Z"/>',
+    bag: '<path d="M5 8h14l-1.2 12H6.2L5 8Z"/><path d="M9 10V6.5a3 3 0 0 1 6 0V10"/>',
+    trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0V4Z"/><path d="M8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8 21h8M9.5 17h5"/>',
+    book: '<path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5v-15Z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H19v-3M9 7h6"/>',
   };
 
   function icon(name) {
@@ -106,6 +110,19 @@
     });
     if (typeof label === 'function') watch((s) => { el.textContent = label(s); });
     if (disabled) watch((s) => { el.disabled = !!disabled(s); });
+    return el;
+  }
+
+  // 跟着数据变的一组元素：sig(s) 变了才重画（列表、卡片）
+  function live(el, sig, render) {
+    let last = null;
+    watch((s) => {
+      const k = JSON.stringify(sig(s));
+      if (k === last) return;
+      last = k;
+      el.textContent = '';
+      el.append(...[].concat(render(s)).filter(Boolean));
+    });
     return el;
   }
 
@@ -245,7 +262,7 @@
   }
 
   // 画一个穿着配饰的 Clawd（帽子 5 行 + 身体 10 行）
-  function drawClawd(canvas, { hat = '', face = '', pose = {} } = {}) {
+  function drawClawd(canvas, { hat = '', face = '', pose = {}, skin = '' } = {}) {
     const { sprite, outfits } = window.Clawd || {};
     if (!sprite || !outfits) return;
     const ctx = canvas.getContext('2d');
@@ -254,7 +271,7 @@
     const acc = [face, hat].filter((id) => id && outfits.ITEMS[id] && outfits.ITEMS[id].face);
     // 先画身体，再画帽子（帽子最下面一行压在脑袋上）
     const list = [
-      ...sprite.pixels({ ...pose, acc }).map(([x, y, c]) => [x, y + off, c]),
+      ...sprite.pixels({ ...pose, acc, skin }).map(([x, y, c]) => [x, y + off, c]),
       ...outfits.hatPixels(hat),
     ];
     sprite.paint(ctx, sprite.GRID_W, rows, list);
@@ -262,7 +279,7 @@
 
   window.ClawdPanel = {
     drawClawd,
-    h, icon, row, section, watch, toggle, select, number, button, text, status, toast, act, ago, hhmm, addTab,
+    h, icon, row, section, watch, live, toggle, select, number, button, text, status, toast, act, ago, hhmm, addTab,
     get state() { return state; },
     show,
   };

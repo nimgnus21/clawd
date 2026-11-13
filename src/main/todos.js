@@ -81,17 +81,20 @@ class Todos extends EventEmitter {
 
   setDone(id, done = true) {
     let changed = false;
+    let first = false;
     this.mutate((arr) => {
       const t = arr.find((x) => x.id === id);
       if (!t || t.done === !!done) return;
       t.done = !!done;
       t.doneAt = done ? Date.now() : 0;
+      // 同一条待办反复勾选只算第一次（统计、经验、每日任务）
+      if (done && !t.counted) { t.counted = true; first = true; }
       changed = true;
     });
     if (changed) {
-      if (done) this.stats.add('todosDone', 1);
+      if (first) this.stats.add('todosDone', 1);
       this.emit('clear', id);
-      if (done) this.emit('done', this.find(id));
+      if (first) this.emit('done', this.find(id));
     }
     return { ok: changed, left: this.open().length };
   }

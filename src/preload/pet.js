@@ -1,7 +1,7 @@
 // 小人页面的 preload：只把需要的几个能力安全地暴露给页面
 const { contextBridge, ipcRenderer } = require('electron');
 
-const CHANNELS = ['tick', 'settings', 'menu', 'falling', 'landed', 'reminder', 'cc', 'say', 'quiet', 'todo', 'sys', 'levelup', 'jumping'];
+const CHANNELS = ['tick', 'settings', 'menu', 'falling', 'landed', 'reminder', 'cc', 'say', 'quiet', 'todo', 'sys', 'levelup', 'jumping', 'growth', 'gift'];
 
 contextBridge.exposeInMainWorld('clawd', {
   platform: process.platform,
@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('clawd', {
   interact: (kind) => ipcRenderer.send('interact', kind),
   focusDone: (min) => ipcRenderer.send('focus-done', min),
   festivalSeen: (info) => ipcRenderer.send('festival-seen', info),
+  openGift: () => ipcRenderer.invoke('gift-open'),
   on: (channel, fn) => {
     if (CHANNELS.includes(channel)) ipcRenderer.on(channel, (_e, data) => fn(data));
   },

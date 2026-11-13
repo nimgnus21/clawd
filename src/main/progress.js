@@ -10,10 +10,12 @@ const GAINS = {
   todo: { xp: 6, mood: 3 },
   focus: { xp: 2, mood: 0 }, // 每分钟
   cc: { xp: 5, mood: 2 },
-  pet: { xp: 1, mood: 3 }, // 摸头、点击、跳舞
+  pet: { xp: 1, mood: 3 }, // 摸头、点击
+  dance: { xp: 1, mood: 4 },
   festival: { xp: 20, mood: 10 },
 };
-const DAILY_PET_XP = 20; // 摸头每天最多给这么多经验
+const CAPPED = ['pet', 'dance'];
+const DAILY_PET_XP = 20; // 摸头、跳舞每天最多给这么多经验
 
 // 升级解锁的配饰
 const UNLOCKS = {
@@ -103,14 +105,23 @@ class Progress extends EventEmitter {
     if (!g) return null;
     const p = this.raw();
     let xp = Math.round(g.xp * times);
-    if (kind === 'pet') {
+    if (CAPPED.includes(kind)) {
       const today = dayKey();
       if (p.petXpDay !== today) { p.petXpDay = today; p.petXp = 0; }
       xp = Math.max(0, Math.min(xp, DAILY_PET_XP - p.petXp));
       p.petXp += xp;
     }
+    return this.apply(p, xp, kind === 'focus' ? 0 : g.mood);
+  }
+
+  // 额外奖励（每日任务、零食、礼物）
+  bonus(xp, mood = 0) {
+    return this.apply(this.raw(), Math.max(0, Math.round(xp)), mood);
+  }
+
+  apply(p, xp, moodDelta) {
     const before = levelFor(p.xp);
-    const mood = Math.min(100, this.mood(p) + g.mood * (kind === 'focus' ? 0 : 1));
+    const mood = Math.min(100, this.mood(p) + moodDelta);
     p.xp += xp;
     p.mood = mood;
     p.moodAt = Date.now();

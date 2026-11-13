@@ -14,6 +14,12 @@ const ITEM_NAMES = {
   headphones: '耳机',
   shades: '墨镜',
   glasses: '眼镜',
+  sprout: '头顶小草',
+  starclip: '星星发卡',
+  catears: '猫耳',
+  scarf: '红围巾',
+  halo: '天使光环',
+  horns: '小恶魔角',
 };
 
 module.exports = { ITEM_NAMES };
