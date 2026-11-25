@@ -12,8 +12,8 @@ const { PanelWindow } = require('./panel-window');
 const { Dnd } = require('./dnd');
 const { Todos } = require('./todos');
 const { SysMon } = require('./sysmon');
-const { Progress, UNLOCKS } = require('./progress');
 const { Growth } = require('./growth');
+const catalog = require('./growth-catalog');
 const diary = require('./diary');
 const { Updater, fakeAutoUpdater } = require('./updater');
 const winapi = require('./winapi');
@@ -40,7 +40,6 @@ let panel;
 let dnd;
 let todos;
 let sysmon;
-let progress;
 let growth;
 let updater;
 let hiddenByDnd = false;
@@ -67,9 +66,9 @@ function publicSettings() {
     // 点小人时偶尔念一下还没做完的事
     todosOpen: todos ? todos.open().slice(0, 3).map((t) => t.text) : [],
     todosOpenCount: todos ? todos.open().length : 0,
-    level: progress ? progress.status().level : 1,
-    mood: progress ? progress.status().mood : 70,
-    unlocked: progress ? progress.status().unlocked : [],
+    level: growth ? growth.summary().level : 1,
+    mood: growth ? growth.mood() : 65,
+    unlocked: growth ? growth.owned() : [],
     growth: growth ? growth.summary() : {},
   };
 }
@@ -144,7 +143,7 @@ const actions = {
   },
   // 面板上让小人做点事（只允许这几个）
   petCommand(cmd) {
-    if (!['dance', 'drink', 'pet'].includes(cmd)) return { error: 'unknown' };
+    if (!['dance', 'drink', 'pet', 'focus-25', 'focus-45', 'focus-stop'].includes(cmd)) return { error: 'unknown' };
     pet.show();
     pet.send('menu', cmd);
     return { ok: true };
@@ -160,36 +159,50 @@ const actions = {
     const ok = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(String(mmdd || ''));
     settings.set({ birthday: ok ? mmdd : '' });
   },
+  // 穿衣服：hat / face / skin，只能穿衣柜里有的
   setOutfit(patch = {}) {
-    const o = { hat: 'none', face: 'none', ...(settings.get('outfit') || {}) };
-    const unlocked = progress.status().unlocked;
-    for (const key of ['hat', 'face']) {
-      if (typeof patch[key] !== 'string') continue;
-      const id = patch[key].slice(0, 20);
-      if (id !== 'none' && !unlocked.includes(id)) return { error: '这件还没解锁' };
-      o[key] = id;
+    const o = { hat: 'none', face: 'none', skin: 'classic', ...(settings.get('outfit') || {}) };
+    const owned = growth.owned();
+    for (const slot of ['hat', 'face', 'skin']) {
+      if (typeof patch[slot] !== 'string') continue;
+      const id = patch[slot].slice(0, 20);
+      const none = slot === 'skin' ? 'classic' : 'none';
+      if (id !== none) {
+        const item = catalog.ITEM[id];
+        if (!item || item.slot !== slot) return { error: '这件不能穿在这里' };
+        if (!owned.includes(id)) return { error: '这件还没有' };
+      }
+      o[slot] = id;
     }
     settings.set({ outfit: o });
     return { ok: true };
   },
-  // ---- 成长：小卖部、皮肤、喂食 ----
-  growthBuy(kind, id) {
-    return growth.buy(String(kind), String(id));
-  },
-  growthSkin(id) {
-    return growth.setSkin(String(id));
-  },
-  growthFeed(id) {
-    const r = growth.feed(String(id));
-    if (r.ok) pet.show();
+  // 衣柜里买东西，买完直接穿上
+  wardrobeBuy(id) {
+    const r = growth.buy(String(id));
+    if (r.ok) actions.setOutfit({ [r.slot]: String(id) });
     return r;
   },
   growthSet(patch = {}) {
-    const cur = growth.config();
     const p = {};
-    for (const k of ['weekendRest', 'morning', 'gift']) if (k in patch) p[k] = !!patch[k];
-    settings.set({ growth: { ...cur, ...p } });
+    for (const k of ['weekendRest', 'morning']) if (k in patch) p[k] = !!patch[k];
+    settings.set({ growth: { ...growth.config(), ...p } });
     return { ok: true };
+  },
+  // 三环的目标：活动几次、专注几分钟（喝水目标用 setWaterGoal）
+  careSet(patch = {}) {
+    const c = { moveGoal: 4, focusGoal: 60, ...(settings.get('care') || {}) };
+    if ('moveGoal' in patch) c.moveGoal = Math.min(20, Math.max(1, Math.round(Number(patch.moveGoal) || 4)));
+    if ('focusGoal' in patch) c.focusGoal = Math.min(600, Math.max(5, Math.round(Number(patch.focusGoal) || 60)));
+    settings.set({ care: c });
+    return { ok: true };
+  },
+  // 手动记一次活动（起来走了走、看了看远处）
+  logBreak() {
+    if (reminders.status('sit').pending) reminders.ack('sit');
+    const count = stats.add('sitBreaks', 1);
+    pet.send('say', `活动 +1 ✓ 今天第 ${count} 次`);
+    return { ok: true, count };
   },
   // ---- 待办 ----
   todoAdd(text, remindAt) {
@@ -275,8 +288,6 @@ function panelState() {
     dnd: dnd.status(),
     todos: todos.list(),
     sys: sysmon.last,
-    progress: progress.status(),
-    unlocks: UNLOCKS,
     growth: growth.view(),
     diary: diary.recent(stats, growth.log(), settings.get('waterGoal') || 8, 14),
     week: diary.weekRecap(stats, growth.log()),
@@ -340,27 +351,19 @@ function wireReminders() {
   reminders.on('clear', (kind, info = {}) => {
     pet.send('reminder', { kind, due: false, away: !!info.away });
     // 提醒之后离开了电脑：也算休息过
-    if (info.away && REMINDER_STAT[kind]) {
-      stats.add(REMINDER_STAT[kind], 1);
-      growth.record(kind);
-    }
+    if (info.away && REMINDER_STAT[kind]) stats.add(REMINDER_STAT[kind], 1);
   });
 
   // 页面里处理了提醒（点了小人）
   ipcMain.handle('reminder-done', (_e, kind) => {
     reminders.ack(kind);
-    // 先记统计再记成长（每日任务的进度看统计）
+    // 只记统计；三环的进度直接看统计，成长模块自己会去检查
     if (kind === 'water') {
       const count = stats.add('water', 1);
-      growth.record('water');
       sendSettings();
       return { count, goal: settings.get('waterGoal') };
     }
-    if (REMINDER_STAT[kind]) {
-      const count = stats.add(REMINDER_STAT[kind], 1);
-      growth.record(kind);
-      return { count };
-    }
+    if (REMINDER_STAT[kind]) return { count: stats.add(REMINDER_STAT[kind], 1) };
     return {};
   });
 }
@@ -392,24 +395,16 @@ function sendGrowth(ev) {
   else petQueue.push(ev);
 }
 
-// 每天第一次见面播报今天的任务（人在电脑前、没勿扰时才说）
+// 早安（每天第一次见面）和晚间提醒（还没打卡）：人在电脑前、没勿扰时才说
 function maybeMorning() {
   if (!petReady || !pet.isVisible() || dnd.active()) return;
   const idle = idleOverride !== null ? idleOverride : powerMonitor.getSystemIdleTime();
   if (idle > 60) return;
-  const m = growth.morning();
+  const m = growth.morning() || growth.evening();
   if (m) sendGrowth(m);
 }
 
-function wireProgress() {
-  const { ITEM_NAMES } = require('./items'); // eslint-disable-line global-require
-  progress.on('levelup', ({ level, unlocked }) => {
-    const names = unlocked.map((id) => ITEM_NAMES[id] || id);
-    growth.noteLevelup(level);
-    pet.send('levelup', { level, unlocked: names });
-    notify(`Clawd 升级啦！Lv.${level}`, names.length ? `解锁了：${names.join('、')}，去控制面板的衣柜看看吧` : '继续加油～');
-  });
-  progress.on('change', sendSettings);
+function wireGrowth() {
   growth.on('change', () => {
     sendSettings();
     panel.push();
@@ -422,53 +417,37 @@ function wireProgress() {
     sendGrowth(ev);
     // 小人藏起来时，重要的事用通知说
     if (pet.isVisible()) return;
-    if (ev.type === 'achievement') notify(`成就解锁 ${ev.icon} ${ev.name}`, `${ev.desc}　+${ev.stars}✦`);
-    else if (ev.type === 'checkin' && ev.milestone) notify(`连续打卡 ${ev.milestone.days} 天 🔥`, `奖励 ${ev.milestone.stars}✦`);
+    if (ev.type === 'checkin' && ev.milestone) notify(`连续打卡 ${ev.milestone.days} 天 🔥`, `奖励 ${ev.milestone.stars}✦`);
+    else if (ev.type === 'unlock') notify(`衣柜里多了「${ev.name}」`, ev.why);
+    else if (ev.type === 'levelup') notify(`Clawd 升到 Lv.${ev.level} 了`, '继续照顾好自己～');
   });
-  growth.on('gift', (g) => pet.send('gift', g));
-  growth.giftBlocked = () => dnd.active() || !pet.isVisible() || !petReady;
   pet.on('loaded', () => {
     petReady = true;
     petQueue.splice(0).forEach((ev) => pet.send('growth', ev));
-    if (growth.giftShowing()) pet.send('gift', { show: true });
     setTimeout(maybeMorning, 9000);
   });
   setInterval(maybeMorning, 60000);
 
-  todos.on('done', () => growth.record('todo'));
-  cc.on('event', (ev) => { if (ev.type === 'done' && !ev.demo) growth.record('cc'); });
-  // 小人页面：摸头、点击、跳舞
-  ipcMain.on('interact', (e, kind) => {
-    if (pet.fromPet(e)) growth.record(kind === 'dance' ? 'dance' : 'pet');
-  });
-  // 专注完成（分钟）
+  // 专注完成（分钟）：记进统计，专注环会自己算
   ipcMain.on('focus-done', (e, min) => {
     if (!pet.fromPet(e)) return;
     const m = Math.max(0, Math.min(180, Math.round(Number(min) || 0)));
-    if (!m) return;
-    stats.add('focusMinutes', m);
-    growth.record('focus', m);
+    if (m) stats.add('focusMinutes', m);
   });
-  // 遇到节日：节日帽收进衣柜，每天第一次 +20 经验
+  // 遇到节日：节日帽收进衣柜
   ipcMain.on('festival-seen', (e, info = {}) => {
     if (!pet.fromPet(e)) return;
-    if (typeof info.hat === 'string') progress.collect(info.hat);
-    const key = `festival:${dayKey()}`;
-    if (data.get('lastFestivalXp') !== key) {
-      data.set({ lastFestivalXp: key });
-      growth.record('festival', 1, { birthday: info.id === 'birthday' });
-    }
+    if (typeof info.hat === 'string') growth.collect(info.hat);
   });
-  // 拆礼物
-  ipcMain.handle('gift-open', (e) => {
-    if (!pet.fromPet(e)) return {};
-    return growth.openGift();
-  });
-  // 心情会随时间下降：每 10 分钟同步一次给小人
-  setInterval(sendSettings, 10 * 60000);
+  // 摸头、点击、跳舞只是玩，不算分
+  ipcMain.on('interact', () => {});
+  // 心情跟着三环和时间走：每 5 分钟同步一次给小人
+  setInterval(sendSettings, 5 * 60000);
   // 好久不见
-  const away = progress.touchSeen();
-  if (away > 12) pet.once('loaded', () => setTimeout(() => pet.send('say', '好久不见！想你了～'), 6500));
+  const last = data.get('lastSeen') || (data.get('progress') || {}).lastSeen || Date.now();
+  data.set({ lastSeen: Date.now() }, { quiet: true });
+  setInterval(() => data.set({ lastSeen: Date.now() }, { quiet: true }), 10 * 60000);
+  if (Date.now() - last > 12 * 3600000) pet.once('loaded', () => setTimeout(() => pet.send('say', '好久不见！想你了～'), 6500));
   growth.start();
 }
 
@@ -544,8 +523,7 @@ function start() {
   panel = new PanelWindow({ getState: panelState, actions });
   dnd = new Dnd(settings, () => [pet.win, panel.win].filter((w) => w && !w.isDestroyed()).map((w) => winapi.hwndOf(w)));
   todos = new Todos(data, stats);
-  progress = new Progress(data);
-  growth = new Growth({ data, settings, stats, progress, ccOn: () => !!cc.status().installed });
+  growth = new Growth({ data, settings, stats });
   updater = new Updater(settings, process.env.CLAWD_TEST && process.env.CLAWD_FAKE_UPDATER ? fakeAutoUpdater(process.env.CLAWD_FAKE_UPDATER) : null);
   sysmon = new SysMon();
   sysmon.on('sample', (smp) => {
@@ -558,7 +536,7 @@ function start() {
   wireReminders();
   wireClaudeCode();
   wireTodos();
-  wireProgress();
+  wireGrowth();
   wireUpdater();
   settings.on('change', onSettingsChange);
   pet.on('loaded', sendSettings);
@@ -594,7 +572,7 @@ function start() {
   // 自动化测试用：只有设置了 CLAWD_TEST 环境变量才会暴露
   if (process.env.CLAWD_TEST) {
     globalThis.__clawd = {
-      actions, settings, data, stats, pet, reminders, menus, cc, panel, panelState, dnd, winapi, todos, sysmon, progress, growth, updater,
+      actions, settings, data, stats, pet, reminders, menus, cc, panel, panelState, dnd, winapi, todos, sysmon, growth, updater,
       setIdle: (n) => { idleOverride = n; },
     };
   }

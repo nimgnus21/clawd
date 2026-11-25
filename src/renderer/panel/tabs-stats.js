@@ -1,18 +1,21 @@
-// 控制面板：统计（每个指标一张小柱状图 + 今日数字 + 表格视图）
+// 控制面板：统计图表（放在「回顾」页里）：每个指标一张小柱状图 + 表格视图
 (() => {
   'use strict';
 
-  const { h, watch, addTab } = window.ClawdPanel;
+  const { h, watch, parts } = window.ClawdPanel;
   const SVG = 'http://www.w3.org/2000/svg';
 
+  // 前三个和今日三环一一对应（目标线就是环的目标）
+  const care = (s) => (s.settings && s.settings.care) || {};
   const METRICS = [
-    { key: 'water', title: '喝水', unit: '杯', goal: (s) => (s.settings && s.settings.waterGoal) || 8 },
-    { key: 'focusMinutes', title: '专注', unit: '分钟' },
-    { key: 'sitBreaks', title: '起来活动', unit: '次' },
-    { key: 'eyeBreaks', title: '护眼', unit: '次' },
+    { key: 'water', title: '💧 喝水', unit: '杯', color: 'var(--ring-water)', goal: (s) => (s.settings && s.settings.waterGoal) || 8 },
+    { key: 'move', title: '🚶 活动', unit: '次', color: 'var(--ring-move)', goal: (s) => care(s).moveGoal || 4 },
+    { key: 'focus', title: '⏱ 专注', unit: '分钟', color: 'var(--ring-focus)', goal: (s) => care(s).focusGoal || 60 },
     { key: 'ccTasks', title: 'Claude Code 任务', unit: '个' },
     { key: 'todosDone', title: '完成待办', unit: '件' },
   ];
+  // 活动 = 起来动 + 护眼；专注 = 专注计时 + Claude Code 干活时间（和三环的算法一样）
+  const derive = (d = {}) => ({ ...d, move: (d.sitBreaks || 0) + (d.eyeBreaks || 0), focus: (d.focusMinutes || 0) + Math.round((d.ccSeconds || 0) / 60) });
 
   let range = 7;
 
@@ -142,22 +145,6 @@
     return v >= 10 ? Math.round(v) : Math.round(v * 10) / 10;
   }
 
-  // ---------- 今日数字 ----------
-  function tiles(s) {
-    const hist = s.history || [];
-    const today = hist[hist.length - 1] || {};
-    const yday = hist[hist.length - 2] || {};
-    return h('div', { class: 'kpis' }, METRICS.map((m) => {
-      const v = today[m.key] || 0;
-      const diff = v - (yday[m.key] || 0);
-      const goal = m.goal ? m.goal(s) : 0;
-      return h('div', { class: 'kpi' },
-        h('div', { class: 'kpi-label' }, m.title),
-        h('div', { class: 'kpi-value' }, String(v), h('span', { class: 'kpi-unit' }, goal ? ` / ${goal} ${m.unit}` : ` ${m.unit}`)),
-        h('div', { class: 'kpi-delta' }, diff === 0 ? '和昨天一样' : `比昨天 ${diff > 0 ? '↑' : '↓'} ${Math.abs(diff)}`));
-    }));
-  }
-
   function table(days) {
     const rows = [...days].reverse();
     return h('div', { class: 'card viz-table-wrap' },
@@ -168,12 +155,7 @@
           ...METRICS.map((m) => h('td', {}, String(d[m.key] || 0))))))));
   }
 
-  addTab({
-    id: 'stats',
-    order: 45,
-    title: '统计',
-    icon: 'chart',
-    subtitle: '每天喝了多少水、专注了多久、Claude Code 帮你做了几件事',
+  parts.stats = {
     render(el) {
       let view = 'chart';
       const rangeBtns = [7, 30].map((n) => {
@@ -189,9 +171,8 @@
       const bar = h('div', { class: 'viz-filters' },
         h('div', { class: 'seg' }, rangeBtns.map(([, b]) => b)),
         h('div', { class: 'seg' }, viewBtns.map(([, b]) => b)));
-      const kpiBox = h('div', { class: 'section' });
       const body = h('div');
-      el.append(bar, kpiBox, body, tip);
+      el.append(bar, body, tip);
 
       let lastSig = '';
       let state = null;
@@ -199,9 +180,7 @@
         if (!state) return;
         rangeBtns.forEach(([n, b]) => b.classList.toggle('active', n === range));
         viewBtns.forEach(([k, b]) => b.classList.toggle('active', k === view));
-        const days = (state.history || []).slice(-range);
-        kpiBox.textContent = '';
-        kpiBox.append(h('h2', {}, '今天'), tiles(state));
+        const days = (state.history || []).slice(-range).map(derive);
         body.textContent = '';
         hideTip();
         if (view === 'table') {
@@ -210,7 +189,7 @@
         }
         body.append(h('div', { class: 'viz-grid-wrap' }, METRICS.map((m) => {
           const goal = m.goal ? m.goal(state) : 0;
-          return h('div', { class: 'card viz-card' },
+          return h('div', { class: 'card viz-card', style: m.color ? `--viz-bar:${m.color}` : null },
             h('div', { class: 'viz-head' },
               h('b', {}, `${m.title}（${m.unit}）`),
               h('span', { class: 'muted' }, `平均 ${avg(days, m.key)} ${m.unit}/天`)),
@@ -225,5 +204,5 @@
         redraw();
       });
     },
-  });
+  };
 })();

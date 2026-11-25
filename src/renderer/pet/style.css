@@ -1,12 +1,19 @@
 :root {
-  --s: 7px;            /* 一个像素点的大小，由 renderer.js 设置 */
+  --s: 7px;            /* 一个像素点的大小，由 pet.js 设置 */
   --pw: 112px;         /* 小人宽 */
   --ph: 70px;          /* 小人高 */
+  --pad: 2px;          /* 画布四周给描边留的空 */
   --hat-h: 0px;        /* 头顶帽子的高度（戴帽子时气泡和时钟往上挪） */
   --orange: #D97757;
-  --ink: #262624;
-  --paper: #F0EEE6;
-  --muted: #A8A59B;
+  --orange-ink: #C4623F;
+  --card: #FFFCF7;
+  --ink: #2B2724;
+  --muted: #8C8378;
+  --line: rgba(90, 50, 30, .13);
+  --ui-font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, ui-monospace, Menlo, monospace;
+  /* 卡片的影子：一圈细边 + 柔和的投影，深色浅色桌面上都看得清 */
+  --card-shadow: 0 0 0 1px var(--line), 0 8px 22px -6px rgba(40, 20, 10, .36), 0 2px 5px rgba(40, 20, 10, .12);
 }
 
 html, body {
@@ -24,6 +31,9 @@ html, body {
   inset: 0;
 }
 
+/* 画布比格子大一圈（描边画在外面），负 margin 抵消，位置不变；画布是按屏幕像素画的，不需要 pixelated */
+#sprite, #hat, #prop { margin: calc(var(--pad) * -1); }
+
 /* ---------- 小人 ---------- */
 #pet {
   position: absolute;
@@ -34,89 +44,118 @@ html, body {
   cursor: grab;
   transform-origin: 50% 100%;
   touch-action: none;
+  z-index: 1;
 }
 #pet:active { cursor: grabbing; }
 
 #sprite {
   display: block;
-  image-rendering: pixelated;
   pointer-events: none;
+  /* 呼吸缩放以脚底为准 */
+  transform-origin: 50% calc(100% - var(--pad));
 }
 
-#pet.jump   { animation: jump .65s cubic-bezier(.3, .7, .4, 1); }
-#pet.land   { animation: land .32s ease-out; }
-#pet.dance  { animation: sway .4s ease-in-out infinite; }
-#pet.wiggle { animation: wiggle .22s ease-in-out infinite; }
+#pet.jump    { animation: jump .62s cubic-bezier(.3, .7, .4, 1); }
+#pet.land    { animation: land .34s cubic-bezier(.3, 1.4, .5, 1); }
+#pet.dance   { animation: hop .42s cubic-bezier(.33, .1, .5, 1) infinite; }
+#pet.wiggle  { animation: wiggle .24s ease-in-out infinite; }
 #pet.stretch { animation: stretch 1.2s ease-in-out 2; }
 
+/* 跳：先蹲（压扁）→ 起跳拉长 → 落地再压一下 */
 @keyframes jump {
   0%   { transform: translateY(0) scale(1, 1); }
-  14%  { transform: translateY(0) scale(1.1, .86); }
-  45%  { transform: translateY(calc(var(--s) * -4)) scale(.94, 1.06); }
-  78%  { transform: translateY(0) scale(1.08, .9); }
+  14%  { transform: translateY(0) scale(1.12, .86); }
+  42%  { transform: translateY(calc(var(--s) * -4.2)) scale(.93, 1.08); }
+  62%  { transform: translateY(calc(var(--s) * -3.6)) scale(.98, 1.02); }
+  82%  { transform: translateY(0) scale(1.1, .9); }
   100% { transform: translateY(0) scale(1, 1); }
 }
 @keyframes land {
-  0%   { transform: scale(1.16, .8); }
-  60%  { transform: scale(.96, 1.04); }
+  0%   { transform: scale(1.18, .8); }
+  55%  { transform: scale(.96, 1.05); }
   100% { transform: scale(1, 1); }
 }
-@keyframes sway {
-  0%, 100% { transform: rotate(-7deg) translateY(0); }
-  25%      { transform: rotate(0deg) translateY(calc(var(--s) * -1)); }
-  50%      { transform: rotate(7deg) translateY(0); }
-  75%      { transform: rotate(0deg) translateY(calc(var(--s) * -1)); }
+/* 跳舞：原地一蹦一蹦（以前是左右转 7 度，像素会锯齿） */
+@keyframes hop {
+  0%, 100% { transform: translateY(0) scale(1.07, .93); }
+  40%      { transform: translateY(calc(var(--s) * -1.6)) scale(.95, 1.06) rotate(-2deg); }
+  55%      { transform: translateY(calc(var(--s) * -1.4)) scale(.97, 1.04) rotate(2deg); }
 }
 @keyframes stretch {
   0%, 100% { transform: scale(1, 1); }
   45%, 60% { transform: scale(.92, 1.14); }
 }
 @keyframes wiggle {
-  0%, 100% { transform: rotate(-5deg); }
-  50%      { transform: rotate(5deg); }
+  0%, 100% { transform: rotate(-4deg) scale(1.02, .98); }
+  50%      { transform: rotate(4deg) scale(.98, 1.02); }
 }
 
-/* ---------- 对话气泡（Claude Code 终端风格） ---------- */
+/* ---------- 脚下的影子 ---------- */
+#shadow {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: calc(var(--pw) * .86);
+  height: calc(var(--s) * 1.8);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(25, 12, 6, .34), rgba(25, 12, 6, .16) 62%, rgba(25, 12, 6, 0));
+  transform: translate(-50%, 50%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ---------- 对话气泡 ---------- */
 #bubble {
   position: absolute;
   left: 50%;
-  bottom: calc(var(--ph) + var(--hat-h) + 16px);
+  bottom: calc(var(--ph) + var(--hat-h) + 15px);
   transform: translateX(-50%);
   width: max-content;
-  max-width: 206px;
-  padding: 7px 11px;
+  max-width: 196px;
+  padding: 6px 11px 7px;
   box-sizing: border-box;
-  border-radius: 10px;
-  background: var(--ink);
-  color: var(--paper);
-  font: 12.5px/1.5 ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas,
-        "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", monospace;
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--ink);
+  font: 12.5px/1.5 var(--ui-font);
   word-break: break-word;
-  box-shadow: 0 0 0 1px rgba(217, 119, 87, .45), 0 3px 10px rgba(0, 0, 0, .28);
-  transition: opacity .18s ease, transform .18s ease;
+  box-shadow: var(--card-shadow);
+  transform-origin: 50% 100%;
+  transition: opacity .16s ease, transform .34s cubic-bezier(.34, 1.56, .64, 1);
   cursor: default;
-  z-index: 2;
+  z-index: 3;
 }
+/* 小尖角：转 45 度的小方块 */
 #bubble::after {
   content: "";
   position: absolute;
   left: 50%;
-  bottom: -6px;
-  margin-left: -6px;
-  border: 6px solid transparent;
-  border-bottom: 0;
-  border-top-color: var(--ink);
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  background: var(--card);
+  transform: rotate(45deg);
+  border-radius: 0 0 3px 0;
+  box-shadow: 1px 1px 0 var(--line);
 }
 #bubble.hidden {
   opacity: 0;
-  transform: translate(-50%, 6px);
+  transform: translate(-50%, 6px) scale(.86);
+  transition: opacity .14s ease, transform .14s ease;
   pointer-events: none;
 }
+/* 庆祝：金色细边 */
+#bubble.celebrate { box-shadow: 0 0 0 1.5px #F2C14E, 0 8px 24px -6px rgba(140, 90, 10, .45), 0 2px 5px rgba(40, 20, 10, .12); }
+/* 常驻状态（Claude Code 工作中、专注倒计时）：紧凑一点 */
+#bubble.status { padding: 5px 11px 6px; font-size: 12.5px; }
+
 #bubble-glyph {
   display: inline-block;
-  width: 1.1em;
-  margin-right: 4px;
-  color: var(--orange);
+  min-width: 1.1em;
+  margin-right: 5px;
+  color: var(--orange-ink);
+  font-weight: 600;
   text-align: center;
 }
 #bubble-glyph:empty { display: none; }
@@ -124,55 +163,52 @@ html, body {
 #bubble-dim {
   margin-left: 8px;
   color: var(--muted);
+  font: 12px var(--mono);
+  font-variant-numeric: tabular-nums;
 }
 #bubble-dim:empty { display: none; }
+/* 一个字一个字冒出来 */
+#bubble-text .ch { opacity: 0; animation: chIn .14s ease-out forwards; }
+@keyframes chIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
 
-/* ---------- 时钟（头顶的小标签） ---------- */
+/* ---------- 时钟胶囊 ---------- */
 #clock {
   position: absolute;
   left: 50%;
-  bottom: calc(var(--ph) + var(--hat-h) + 14px);
+  bottom: calc(var(--ph) + var(--hat-h) + 13px);
   transform: translateX(-50%);
-  padding: 2px 9px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 9px 2px;
   border-radius: 999px;
-  background: rgba(38, 38, 36, .82);
-  color: var(--paper);
-  font: 600 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, Menlo, "Microsoft YaHei", "PingFang SC", monospace;
+  background: rgba(255, 252, 247, .95);
+  color: var(--ink);
+  font: 600 11.5px/1.6 var(--ui-font);
   white-space: nowrap;
-  box-shadow: 0 0 0 1px rgba(217, 119, 87, .35), 0 2px 6px rgba(0, 0, 0, .2);
+  box-shadow: 0 0 0 1px var(--line), 0 4px 12px -4px rgba(40, 20, 10, .32);
   transition: opacity .18s ease;
   cursor: default;
-  z-index: 2;
+  z-index: 3;
 }
 #clock.hidden { opacity: 0; pointer-events: none; }
-#clock-week { color: var(--muted); font-weight: 400; margin-right: 6px; }
-#clock-colon.off { opacity: .25; }
-#clock-streak { margin-left: 6px; color: #F2C14E; font-weight: 600; }
+#clock-week { color: var(--muted); font-weight: 500; }
+#clock-time { font-variant-numeric: tabular-nums; letter-spacing: .3px; }
+#clock-colon { display: inline-block; transition: opacity .3s; }
+#clock-colon.off { opacity: .3; }
+/* 今日三环：三个小圆点，合上了就填上各自的颜色 */
+#clock-rings { display: flex; gap: 3px; padding-left: 6px; border-left: 1px solid var(--line); }
+#clock-rings:empty { display: none; }
+#clock-rings i { width: 7px; height: 7px; border-radius: 50%; box-sizing: border-box; border: 1.5px solid #D9CEC1; }
+#clock-rings i.on { border: 0; }
+#clock-rings i.ring-water.on { background: #3A8FD6; }
+#clock-rings i.ring-move.on { background: #3A9E5F; }
+#clock-rings i.ring-focus.on { background: #D97757; }
+#clock-streak { color: var(--orange-ink); }
 #clock-streak:empty { display: none; }
-
-/* ---------- 每日礼物盒 ---------- */
-#gift {
-  position: absolute;
-  left: calc(50% - var(--pw) / 2 - var(--gw, 30px) - 4px);
-  bottom: 0;
-  display: none;
-  image-rendering: pixelated;
-  cursor: pointer;
-  transform-origin: 50% 100%;
-  animation: giftBob 1.6s ease-in-out infinite;
-}
-#gift.show { display: block; }
-#gift.opening { animation: giftPop .5s ease-out; }
-@keyframes giftBob {
-  0%, 70%, 100% { transform: translateY(0) rotate(0); }
-  78% { transform: translateY(-3px) rotate(-6deg); }
-  86% { transform: translateY(-3px) rotate(6deg); }
-}
-@keyframes giftPop {
-  0% { transform: scale(1, 1); }
-  40% { transform: scale(1.25, .8); }
-  100% { transform: scale(1, 1); }
-}
 
 /* ---------- 头顶的帽子 ---------- */
 #hat {
@@ -181,50 +217,61 @@ html, body {
   bottom: calc(100% - var(--s)); /* 最下面一行压在脑袋上 */
   z-index: 1;
   display: none;
-  image-rendering: pixelated;
   pointer-events: none;
 }
 #hat.show { display: block; }
 
-/* ---------- 手里拿的水杯 ---------- */
+/* ---------- 手里拿的东西（水杯、零食） ---------- */
 #prop {
   position: absolute;
   left: 100%;
   bottom: calc(var(--s) * 3);
   display: none;
-  image-rendering: pixelated;
   pointer-events: none;
 }
 #prop.show { display: block; }
 
-/* ---------- 飘起来的小符号 ---------- */
+/* ---------- 飘起来的小东西（像素画） ---------- */
+/* 在小人前面、气泡和时钟后面：飘上去的星星不会挡住字 */
 #fx {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  z-index: 2;
 }
 .particle {
   position: absolute;
-  font: bold 15px/1 ui-monospace, Menlo, Consolas, monospace;
   pointer-events: none;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, .45);
-  animation: floatUp 1.7s ease-out forwards;
+  animation: floatUp 1.7s cubic-bezier(.2, .7, .4, 1) forwards;
+  filter: drop-shadow(0 1px 1px rgba(25, 12, 6, .3));
 }
-.particle.zzz   { color: var(--paper); font-size: 13px; }
-.particle.note  { color: var(--orange); }
-.particle.heart { color: #E86A6A; }
-.particle.spark { color: #F2C14E; }
-.particle.drop  { color: #4C9BE0; font-size: 13px; }
-
+.particle.text { font: bold 15px/1 var(--ui-font); }
 @keyframes floatUp {
-  0%   { opacity: 0; transform: translate(0, 0) scale(.6); }
-  15%  { opacity: 1; }
-  100% { opacity: 0; transform: translate(var(--drift, 10px), -50px) scale(1.15); }
+  0%   { opacity: 0; transform: translate(0, 4px) scale(.4); }
+  14%  { opacity: 1; transform: translate(0, -6px) scale(1.12); }
+  24%  { transform: translate(calc(var(--drift, 10px) * .2), -12px) scale(1); }
+  75%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--drift, 10px), -54px) scale(.9); }
+}
+
+/* 庆祝时的彩纸 */
+.confetti {
+  position: absolute;
+  width: var(--cs, 5px);
+  height: calc(var(--cs, 5px) * .6);
+  border-radius: 1px;
+  pointer-events: none;
+  animation: confetti var(--cd, 1.4s) cubic-bezier(.15, .6, .35, 1) forwards;
+}
+@keyframes confetti {
+  0%   { opacity: 1; transform: translate(0, 0) rotate(0); }
+  45%  { opacity: 1; transform: translate(calc(var(--dx) * .75), var(--dy)) rotate(calc(var(--rot) * .5)); }
+  100% { opacity: 0; transform: translate(var(--dx), calc(var(--dy) + 70px)) rotate(var(--rot)); }
 }
 
 /* ---------- 勿扰：安静模式 ---------- */
 body.quiet #bubble,
 body.quiet #clock,
-body.quiet #fx,
-body.quiet #gift { display: none; }
-body.quiet #pet { opacity: .35; }
+body.quiet #fx { display: none; }
+body.quiet #pet,
+body.quiet #shadow { opacity: .35; }

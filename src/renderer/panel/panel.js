@@ -39,6 +39,7 @@
     shirt: '<path d="M8 3 3.5 6l2 4.2L8 9v12h8V9l2.5 1.2 2-4.2L16 3a4 4 0 0 1-8 0Z"/>',
     bag: '<path d="M5 8h14l-1.2 12H6.2L5 8Z"/><path d="M9 10V6.5a3 3 0 0 1 6 0V10"/>',
     trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0V4Z"/><path d="M8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8 21h8M9.5 17h5"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/>',
     book: '<path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5v-15Z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H19v-3M9 7h6"/>',
   };
 
@@ -197,17 +198,26 @@
     }
   }
 
-  function show(id) {
+  // id 可以是 "页面" 或 "页面:小节"（比如 settings:claude 打开设置并滚到 Claude Code 那一节）
+  function show(target) {
+    const [id, anchor] = String(target || '').split(':');
     const tab = tabs.find((t) => t.id === id) || tabs[0];
-    current = tab.id;
-    updaters = [];
-    renderNav();
-    document.getElementById('title').textContent = tab.title;
-    document.getElementById('subtitle').textContent = tab.subtitle || '';
-    const content = document.getElementById('content');
-    content.textContent = '';
-    tab.render(content);
-    document.getElementById('main').scrollTop = 0;
+    if (tab.id !== current || !anchor) {
+      current = tab.id;
+      updaters = [];
+      renderNav();
+      document.getElementById('title').textContent = tab.title;
+      document.getElementById('subtitle').textContent = tab.subtitle || '';
+      const content = document.getElementById('content');
+      content.textContent = '';
+      tab.render(content);
+      if (state) update(state);
+      document.getElementById('main').scrollTop = 0;
+    }
+    if (anchor) {
+      const el = document.querySelector(`[data-anchor="${anchor}"]`);
+      if (el) setTimeout(() => el.scrollIntoView({ block: 'start' }), 30);
+    }
   }
 
   function update(next) {
@@ -221,7 +231,10 @@
     const c = document.getElementById('logo');
     const sprite = window.Clawd && window.Clawd.sprite;
     if (!c || !sprite) return;
-    sprite.paint(c.getContext('2d'), sprite.GRID_W, sprite.GRID_H, sprite.pixels({}));
+    const dpr = window.devicePixelRatio || 1;
+    c.width = 34 * dpr;
+    c.height = 22 * dpr;
+    sprite.render(c.getContext('2d'), sprite.GRID_W, sprite.GRID_H, sprite.pixels({}), { pad: 1 * dpr });
   }
 
   async function init() {
@@ -261,25 +274,42 @@
     };
   }
 
-  // 画一个穿着配饰的 Clawd（帽子 5 行 + 身体 10 行）
+  // 画一个穿着配饰的 Clawd（帽子 5 行 + 身体 10 行），按屏幕像素画，高清
+  // canvas 的 width/height 属性当作 CSS 尺寸，第一次画时换成 ×devicePixelRatio
   function drawClawd(canvas, { hat = '', face = '', pose = {}, skin = '' } = {}) {
     const { sprite, outfits } = window.Clawd || {};
     if (!sprite || !outfits) return;
+    const dpr = window.devicePixelRatio || 1;
+    if (!canvas.dataset.w) {
+      canvas.dataset.w = canvas.width;
+      canvas.dataset.h = canvas.height;
+    }
+    const w = Number(canvas.dataset.w);
+    const hgt = Number(canvas.dataset.h);
+    if (canvas.width !== Math.round(w * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(hgt * dpr);
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${hgt}px`;
+    }
     const ctx = canvas.getContext('2d');
     const off = outfits.HAT_H - outfits.HAT_OVERLAP;
     const rows = off + sprite.GRID_H;
     const acc = [face, hat].filter((id) => id && outfits.ITEMS[id] && outfits.ITEMS[id].face);
     // 先画身体，再画帽子（帽子最下面一行压在脑袋上）
     const list = [
-      ...sprite.pixels({ ...pose, acc, skin }).map(([x, y, c]) => [x, y + off, c]),
+      ...sprite.pixels({ ...pose, acc, skin }).map((p) => [p[0], p[1] + off, p[2], p[3]]),
       ...outfits.hatPixels(hat),
     ];
-    sprite.paint(ctx, sprite.GRID_W, rows, list);
+    sprite.render(ctx, sprite.GRID_W, rows, list, { pad: Math.round(2 * dpr) });
   }
+
+  // 各页面共用的大块内容（待办、统计图表…），由 tabs-*.js 放进来
+  const parts = {};
 
   window.ClawdPanel = {
     drawClawd,
-    h, icon, row, section, watch, live, toggle, select, number, button, text, status, toast, act, ago, hhmm, addTab,
+    h, icon, row, section, watch, live, toggle, select, number, button, text, status, toast, act, ago, hhmm, addTab, parts,
     get state() { return state; },
     show,
   };

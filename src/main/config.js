@@ -7,7 +7,8 @@ const IS_LINUX = process.platform === 'linux';
 const GRID_W = 16;
 const GRID_H = 10;
 // 每个像素点在屏幕上多大
-const SCALES = { small: 5, medium: 7, large: 10 };
+// 每个像素格多大：中号 80×50，小号 64×40，大号 112×70
+const SCALES = { small: 4, medium: 5, large: 7 };
 
 // settings.json：用户可以改的选项
 const SETTINGS_DEFAULTS = {
@@ -24,8 +25,9 @@ const SETTINGS_DEFAULTS = {
   sysAlerts: true, // 电量低、CPU 太忙、内存快满时提醒
   festival: true, // 节日自动换装
   birthday: '', // 生日 'MM-DD'，那天戴派对帽
-  outfit: { hat: 'none', face: 'none' }, // 衣柜里选的配饰
-  growth: { weekendRest: true, morning: true, gift: true }, // 周末休息不断签、早安播报、每日礼物
+  outfit: { hat: 'none', face: 'none', skin: 'classic' }, // 衣柜里穿的
+  growth: { weekendRest: true, morning: true }, // 周末休息不断签、早晚播报
+  care: { moveGoal: 4, focusGoal: 60 }, // 今日三环的目标（喝水目标是 waterGoal）
   x: null,
   y: null,
 };

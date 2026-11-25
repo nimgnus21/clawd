@@ -27,7 +27,8 @@
   // pose: { eyes, look(-1/0/1), armL, armR, legs, squish(呼吸下压), blush, sweat, sit(坐下), mouth('o' | 'small'), acc(配饰 id 列表) }
   function pixels(pose) {
     const out = [];
-    const put = (x, y, c) => out.push([x, y, c]);
+    // 第 4 项是像素的类型（eye / mouth / blush / dot），精致渲染时用
+    const put = (x, y, c, kind) => out.push(kind ? [x, y, c, kind] : [x, y, c]);
     const skin = SKINS[pose.skin] || SKINS.classic;
     const BODY = skin.body;
     const EYE = skin.eye || COLOR.eye;
@@ -37,7 +38,7 @@
     // 身体
     for (let y = top; y < oy + 8; y++) for (let x = 2; x < 14; x++) put(x, y, BODY);
     if (skin.shine) { put(3, top, skin.shine); put(4, top, skin.shine); put(3, top + 1, skin.shine); }
-    if (skin.dots) for (const [x, y, c] of skin.dots) if (top + y < oy + 8) put(x, top + y, c);
+    if (skin.dots) for (const [x, y, c] of skin.dots) if (top + y < oy + 8) put(x, top + y, c, 'dot');
 
     // 手
     const ly = ARM_Y[pose.armL || 'down'] + top;
@@ -59,7 +60,8 @@
     const look = pose.look || 0;
     const ex = [4 + look, 11 + look];
     const ey = 2 + top;
-    const eye = (x, y) => put(x, y, EYE);
+    const eye = (x, y) => put(x, y, EYE, 'eye');
+    const mouth = (x, y) => put(x, y, EYE, 'mouth');
     switch (pose.eyes || 'open') {
       case 'blink':
         ex.forEach((x) => eye(x, ey + 1));
@@ -86,13 +88,13 @@
     }
     // 嘴（平时没有嘴，打哈欠、吃惊时才张开）
     if (pose.mouth === 'o') {
-      eye(7, ey + 3); eye(8, ey + 3); eye(7, ey + 4); eye(8, ey + 4);
+      mouth(7, ey + 3); mouth(8, ey + 3); mouth(7, ey + 4); mouth(8, ey + 4);
     } else if (pose.mouth === 'small') {
-      eye(7, ey + 3); eye(8, ey + 3);
+      mouth(7, ey + 3); mouth(8, ey + 3);
     }
     if (pose.blush) {
-      put(3, ey + 2, skin.blush || COLOR.blush);
-      put(12, ey + 2, skin.blush || COLOR.blush);
+      put(3, ey + 2, skin.blush || COLOR.blush, 'blush');
+      put(12, ey + 2, skin.blush || COLOR.blush, 'blush');
     }
     // 脸上的配饰（墨镜、眼镜、耳机的耳罩…），定义在 outfits.js
     for (const id of pose.acc || []) {
@@ -120,41 +122,127 @@
     return out;
   }
 
-  // 零食：和水杯一样 4 x 5，bites = 咬了几口（0~3）
-  const SNACK_ART = {
-    cookie: { rows: ['....', '.CC.', 'CDCC', 'CCDC', '.CC.'], pal: { C: '#D9A25F', D: '#6B4226' } },
-    fish: { rows: ['....', '..F.', 'FFFF', '.FF.', '..F.'], pal: { F: '#9AA4AE' } },
-    pudding: { rows: ['.BB.', '.YY.', 'YYYY', 'YYYY', 'PPPP'], pal: { B: '#8A4B2A', Y: '#F2C14E', P: '#CFC8BD' } },
-    cake: { rows: ['.R..', 'WWWW', 'SSSS', 'WWWW', 'SSSS'], pal: { R: '#D64545', W: '#F4F1EA', S: '#E8A0A8' } },
+  // 飘起来的小东西（爱心、星星、音符、Z…）也是像素画，跟 Clawd 一个画风
+  const PARTICLES = {
+    heart: { rows: ['.RR.RR.', 'RWRRRRR', 'RRRRRRR', '.RRRRR.', '..RRR..', '...R...'], pal: { R: '#EF5B6E', W: '#FFD3DA' } },
+    spark: { rows: ['...Y...', '...Y...', '..YWY..', 'YYWWWYY', '..YWY..', '...Y...', '...Y...'], pal: { Y: '#F5C54A', W: '#FFF6CF' } },
+    note: { rows: ['...OO.', '...O.O', '...O..', '.OOO..', 'OOOO..', '.OO...'], pal: { O: '#D97757' } },
+    z: { rows: ['WWWWW', '...W.', '..W..', '.W...', 'WWWWW'], pal: { W: '#EEF2FF' } },
+    drop: { rows: ['.B.', '.B.', 'BBB', 'BWB', '.B.'], pal: { B: '#4FA3E8', W: '#CFE8FF' } },
+    bang: { rows: ['O', 'O', 'O', '.', 'O'], pal: { O: '#F5A524' } },
+    check: { rows: ['....G', '...GG', 'G.GG.', 'GGG..', '.G...'], pal: { G: '#45B26B' } },
   };
-  function snackPixels(id, bites = 0) {
-    const art = SNACK_ART[id] || SNACK_ART.cookie;
-    const out = [];
-    art.rows.forEach((row, y) => {
-      [...row].forEach((ch, x) => {
-        // 从右上角开始一口一口没掉
-        if (bites && x >= 4 - bites && y <= bites) return;
-        if (art.pal[ch]) out.push([x, y, art.pal[ch]]);
-      });
-    });
-    return out;
+  function particlePixels(name) {
+    const d = PARTICLES[name];
+    if (!d) return null;
+    const list = [];
+    d.rows.forEach((row, y) => [...row].forEach((ch, x) => { if (d.pal[ch]) list.push([x, y, d.pal[ch]]); }));
+    return { cols: d.rows[0].length, rows: d.rows.length, list };
   }
 
-  // 礼物盒：6 x 6；open = 打开了（盖子飞起来）
-  const GIFT_W = 6;
-  const GIFT_H = 6;
-  function giftPixels(open = false) {
-    const R = '#D64545';
-    const G = '#F2C14E';
-    const rows = open
-      ? ['GG..GG', '.G..G.', '......', 'RRGRRR', 'RRGRRR', 'RRGRRR']
-      : ['.G..G.', '..GG..', 'GGGGGG', 'RRGRRR', 'RRGRRR', 'RRGRRR'];
-    const out = [];
-    rows.forEach((row, y) => [...row].forEach((ch, x) => {
-      if (ch === 'R') out.push([x, y, R]);
-      if (ch === 'G') out.push([x, y, G]);
-    }));
-    return out;
+  // ================= 精致渲染 =================
+  // 还是像素风，但每一格画得更细：外轮廓圆角、深色描边、顶部高光和底部阴影、眼睛高光、腮红变成小椭圆
+  const hexRgb = (c) => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(c || '');
+    if (!m) return [128, 128, 128];
+    const n = parseInt(m[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  };
+  const rgbHex = (r) => `#${r.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('')}`;
+  const mix = (a, b, t) => { const B = hexRgb(b); return rgbHex(hexRgb(a).map((v, i) => v + (B[i] - v) * t)); };
+  const lum = (c) => { const [r, g, b] = hexRgb(c); return (0.299 * r + 0.587 * g + 0.114 * b) / 255; };
+
+  function fillRound(ctx, x, y, w, h, radii) {
+    ctx.beginPath();
+    if (radii.some((r) => r > 0) && ctx.roundRect) ctx.roundRect(x, y, w, h, radii);
+    else ctx.rect(x, y, w, h);
+    ctx.fill();
+  }
+
+  // opts: { pad: 画布四周留给描边的像素, outline: 描边粗细（像素）, shade: 是否画高光阴影, round: 圆角占一格的比例 }
+  function render(context, cols, rows, list, opts = {}) {
+    const ctx = context;
+    const W = ctx.canvas.width;
+    const H = ctx.canvas.height;
+    const pad = opts.pad || 0;
+    const cw = (W - 2 * pad) / cols;
+    const ch = (H - 2 * pad) / rows;
+    ctx.clearRect(0, 0, W, H);
+    const X = (x) => Math.round(pad + x * cw);
+    const Y = (y) => Math.round(pad + y * ch);
+    const key = (x, y) => `${x},${y}`;
+    const filled = new Set(list.map((p) => key(p[0], p[1])));
+    const has = (x, y) => filled.has(key(x, y));
+    const R = Math.min(cw, ch) * (opts.round == null ? 0.34 : opts.round);
+    const ow = opts.outline == null ? Math.max(1, Math.round(Math.min(cw, ch) * 0.15)) : opts.outline;
+    const convex = (x, y, same) => {
+      const t = !same(x, y - 1); const b = !same(x, y + 1); const l = !same(x - 1, y); const r = !same(x + 1, y);
+      return [t && l ? R : 0, t && r ? R : 0, b && r ? R : 0, b && l ? R : 0];
+    };
+    // 同一个位置先画的是底，后画的是叠在上面的五官 / 花纹
+    const seen = new Set();
+    const base = [];
+    const feat = [];
+    for (const p of list) {
+      const k = key(p[0], p[1]);
+      if (seen.has(k)) feat.push(p);
+      else { seen.add(k); base.push(p); }
+    }
+    // 1) 描边：每格往外扩 ow，用自己颜色的深色版
+    if (ow > 0) {
+      for (const [x, y, c] of base) {
+        ctx.fillStyle = opts.outlineColor || mix(c, '#2A160E', 0.62);
+        fillRound(ctx, X(x) - ow, Y(y) - ow, X(x + 1) - X(x) + 2 * ow, Y(y + 1) - Y(y) + 2 * ow, convex(x, y, has).map((r) => (r ? r + ow * 0.6 : 0)));
+      }
+    }
+    // 2) 底色 + 顶部高光 + 底部和右边的阴影
+    for (const [x, y, c] of base) {
+      const x0 = X(x); const y0 = Y(y); const w = X(x + 1) - x0; const h = Y(y + 1) - y0;
+      const rad = convex(x, y, has);
+      ctx.fillStyle = c;
+      fillRound(ctx, x0, y0, w, h, rad);
+      if (opts.shade === false) continue;
+      ctx.save();
+      ctx.beginPath();
+      if (rad.some((r) => r > 0) && ctx.roundRect) ctx.roundRect(x0, y0, w, h, rad); else ctx.rect(x0, y0, w, h);
+      ctx.clip();
+      const band = (f, size) => Math.max(1, Math.round(size * f));
+      if (!has(x, y - 1)) { ctx.fillStyle = mix(c, '#FFFFFF', 0.26); ctx.fillRect(x0, y0, w, band(0.2, h)); }
+      if (!has(x, y + 1)) { ctx.fillStyle = mix(c, '#3A1A0C', 0.2); ctx.fillRect(x0, y0 + h - band(0.24, h), w, band(0.24, h)); }
+      if (!has(x + 1, y)) { ctx.fillStyle = mix(c, '#3A1A0C', 0.1); ctx.fillRect(x0 + w - band(0.18, w), y0, band(0.18, w), h); }
+      ctx.restore();
+    }
+    // 3) 五官：按同色的邻居做圆角；眼睛加高光
+    const featAt = new Map(feat.map((p) => [key(p[0], p[1]), p[2]]));
+    for (const [x, y, c, kind] of feat) {
+      const x0 = X(x); const y0 = Y(y); const w = X(x + 1) - x0; const h = Y(y + 1) - y0;
+      ctx.fillStyle = c;
+      if (kind === 'blush') {
+        ctx.globalAlpha = 0.85;
+        fillRound(ctx, x0 + w * 0.08, y0 + h * 0.2, w * 0.84, h * 0.6, [h * 0.3, h * 0.3, h * 0.3, h * 0.3]);
+        ctx.globalAlpha = 1;
+        continue;
+      }
+      if (kind === 'dot') {
+        const d = Math.max(1, Math.round(w * 0.42));
+        ctx.fillRect(Math.round(x0 + (w - d) / 2), Math.round(y0 + (h - d) / 2), d, d);
+        continue;
+      }
+      const same = (xx, yy) => featAt.get(key(xx, yy)) === c;
+      const lone = !same(x - 1, y) && !same(x + 1, y) && !same(x, y - 1) && !same(x, y + 1);
+      // 斜着连起来的像素（^ ^ 眼睛）不做圆角，不然会糊成一串圆点
+      fillRound(ctx, x0, y0, w, h, lone ? [0, 0, 0, 0] : convex(x, y, same).map((r) => r * 1.15));
+      if (kind === 'eye' && lum(c) < 0.35 && same(x, y + 1) && !same(x, y - 1)) {
+        ctx.fillStyle = 'rgba(255,255,255,.92)';
+        const sz = Math.max(1, Math.round(w * 0.36));
+        ctx.fillRect(Math.round(x0 + w * 0.14), Math.round(y0 + h * 0.16), sz, sz);
+      }
+    }
+  }
+
+  // 描边要用的留白（CSS 像素），按每格大小算
+  function padFor(scale) {
+    return Math.max(2, Math.round(scale * 0.3));
   }
 
   // 把像素列表画到画布上（四舍五入到整像素，缩放比例是小数时也不会有缝）
@@ -170,5 +258,5 @@
     }
   }
 
-  C.sprite = { GRID_W, GRID_H, COLOR, SKINS, CUP_W, CUP_H, GIFT_W, GIFT_H, pixels, cupPixels, snackPixels, giftPixels, paint };
+  C.sprite = { GRID_W, GRID_H, COLOR, SKINS, CUP_W, CUP_H, PARTICLES, pixels, cupPixels, particlePixels, paint, render, padFor, mix };
 })();

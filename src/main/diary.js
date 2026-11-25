@@ -1,5 +1,20 @@
 // Clawd 日记：根据每天的统计和成长记录，用模板拼出一篇小日记（不联网、不需要 API key）
-const { seededRandom, pickOne, SNACKS, ACHIEVEMENTS } = require('./growth-catalog');
+const { ITEM } = require('./growth-catalog');
+
+// 按字符串固定的随机数：同一天的日记每次打开都一样
+function seededRandom(str) {
+  let a = 2166136261;
+  for (let i = 0; i < str.length; i++) { a ^= str.charCodeAt(i); a = Math.imul(a, 16777619); }
+  a >>>= 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const pickOne = (rnd, list) => list[Math.floor(rnd() * list.length)];
 
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
@@ -21,15 +36,6 @@ const CLOSERS = {
   quiet: ['不过没关系，我一直在这儿等你。', '明天记得来摸摸我呀。', '我会乖乖在桌面上等你的。'],
 };
 
-function snackName(id) {
-  const s = SNACKS.find((x) => x.id === id);
-  return s ? `${s.emoji}${s.name}` : id;
-}
-
-function achName(id) {
-  const a = ACHIEVEMENTS.find((x) => x.id === id);
-  return a ? `${a.icon}「${a.name}」` : id;
-}
 
 // 一天的日记：{ day, title, mood: 'great'|'good'|'quiet', lines: [...] }
 function entry(day, stat = {}, log = {}, waterGoal = 8) {
@@ -46,7 +52,7 @@ function entry(day, stat = {}, log = {}, waterGoal = 8) {
     score += 1;
   }
 
-  const focus = stat.focusMinutes || 0;
+  const focus = (stat.focusMinutes || 0) + Math.round((stat.ccSeconds || 0) / 60);
   if (focus > 0) {
     lines.push(pickOne(rnd, [`专注了 ${focus} 分钟，我在旁边安静地敲键盘陪着。`, `一起专注了 ${focus} 分钟，认真的样子好帅！`]));
     score += focus >= 60 ? 2 : 1;
@@ -71,29 +77,15 @@ function entry(day, stat = {}, log = {}, waterGoal = 8) {
     score += 1;
   }
 
-  if (log.chest) {
-    lines.push('每日任务全部完成，还打开了宝箱 🧰');
+  if (log.all) {
+    lines.push('三个环全合上了，完美的一天 🎉');
     score += 2;
-  } else if (log.quests) {
-    lines.push(`完成了 ${log.quests} 个每日任务。`);
+  } else if (log.rings) {
+    lines.push(`合上了 ${log.rings} 个环${log.checkin ? '，打卡成功' : ''}。`);
     score += 1;
   }
   if (log.checkin && log.streak > 1) lines.push(`连续打卡第 ${log.streak} 天 🔥`);
-
-  const feeds = log.feeds || [];
-  if (feeds.length) {
-    const names = [...new Set(feeds)].map(snackName);
-    lines.push(`吃了${names.join('、')}，${pickOne(rnd, ['好好吃！', '幸福～', '肚子圆滚滚的。'])}`);
-    score += 1;
-  }
-
-  if (log.gift) lines.push(`拆开了今天的礼物：${log.gift} 🎁`);
-
-  const pets = stat.pets || 0;
-  if (pets >= 3) lines.push(pickOne(rnd, [`被摸了 ${pets} 次头，嘿嘿 ///`, `今天被摸了 ${pets} 次，开心！`]));
-  if ((stat.dances || 0) > 0) lines.push(stat.dances > 1 ? `一起跳了 ${stat.dances} 支舞 💃` : '一起跳了一支舞 💃');
-
-  for (const id of log.achievements || []) lines.push(`解锁了成就${achName(id)}！`);
+  for (const id of log.unlocked || []) if (ITEM[id]) lines.push(`衣柜里多了「${ITEM[id].name}」！`);
   for (const lv of log.levelups || []) lines.push(`升到了 Lv.${lv}！`);
 
   const mood = score >= 6 ? 'great' : score >= 2 ? 'good' : 'quiet';
@@ -128,13 +120,13 @@ function weekRecap(stats, log = {}) {
   const sum = (list, f) => list.reduce((a, d) => a + (d[f] || 0), 0);
   const sumLog = (list, f) => list.reduce((a, d) => a + (typeof f === 'function' ? f(log[d.date] || {}) : 0), 0);
   const items = [
-    { key: 'water', label: '喝水', unit: '杯', now: sum(cur, 'water'), before: sum(prev, 'water') },
-    { key: 'focus', label: '专注', unit: '分钟', now: sum(cur, 'focusMinutes'), before: sum(prev, 'focusMinutes') },
-    { key: 'breaks', label: '活动和护眼', unit: '次', now: sum(cur, 'sitBreaks') + sum(cur, 'eyeBreaks'), before: sum(prev, 'sitBreaks') + sum(prev, 'eyeBreaks') },
+    { key: 'water', label: '💧 喝水', unit: '杯', now: sum(cur, 'water'), before: sum(prev, 'water') },
+    { key: 'breaks', label: '🚶 活动', unit: '次', now: sum(cur, 'sitBreaks') + sum(cur, 'eyeBreaks'), before: sum(prev, 'sitBreaks') + sum(prev, 'eyeBreaks') },
+    { key: 'focus', label: '⏱ 专注', unit: '分钟', now: sum(cur, 'focusMinutes') + Math.round(sum(cur, 'ccSeconds') / 60), before: sum(prev, 'focusMinutes') + Math.round(sum(prev, 'ccSeconds') / 60) },
     { key: 'todo', label: '完成待办', unit: '件', now: sum(cur, 'todosDone'), before: sum(prev, 'todosDone') },
     { key: 'cc', label: 'Claude Code 任务', unit: '个', now: sum(cur, 'ccTasks'), before: sum(prev, 'ccTasks') },
     { key: 'checkin', label: '打卡', unit: '天', now: sumLog(cur, (e) => (e.checkin ? 1 : 0)), before: sumLog(prev, (e) => (e.checkin ? 1 : 0)) },
-    { key: 'stars', label: '获得星星', unit: '✦', now: sumLog(cur, (e) => e.stars || 0), before: sumLog(prev, (e) => e.stars || 0) },
+    { key: 'stars', label: '获得 ✦', unit: '✦', now: sumLog(cur, (e) => e.stars || 0), before: sumLog(prev, (e) => e.stars || 0) },
   ];
   // 一句总结：挑进步最大的一项真实习惯夸一下（星星、打卡这种游戏数字不算）
   const habits = items.filter((x) => !['stars', 'checkin'].includes(x.key));
@@ -142,7 +134,7 @@ function weekRecap(stats, log = {}) {
   const better = habits.filter((x) => x.now > x.before && x.now > 0).sort((a, b) => ratio(b) - ratio(a) || habits.indexOf(a) - habits.indexOf(b));
   let headline;
   if (!items.some((x) => x.now > 0)) headline = '这周还没什么记录，从喝一杯水开始吧 💧';
-  else if (better.length) headline = `这周${better[0].label}比上周多了 ${better[0].now - better[0].before} ${better[0].unit}，进步看得见！`;
+  else if (better.length) headline = `这周${better[0].label.replace(/^\S+\s/, '')}比上周多了 ${better[0].now - better[0].before} ${better[0].unit}，进步看得见！`;
   else headline = '这周稳稳的，保持住就很棒～';
   return { items, headline };
 }

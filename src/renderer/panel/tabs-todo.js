@@ -1,8 +1,8 @@
-// 控制面板：待办
+// 控制面板：待办（放在「今天」页里）
 (() => {
   'use strict';
 
-  const { h, watch, toast, act, addTab } = window.ClawdPanel;
+  const { h, watch, toast, act, parts } = window.ClawdPanel;
   const pad2 = (n) => String(n).padStart(2, '0');
 
   function startOfDay(d) {
@@ -86,13 +86,7 @@
     return h('div', { class: 'row todo' }, check, h('div', { class: 'label' }, label), when, done, del);
   }
 
-  addTab({
-    id: 'todo',
-    order: 22,
-    title: '待办',
-    icon: 'list',
-    subtitle: '记下要做的事；设了时间的，到点 Clawd 会举手提醒你',
-    badge: (s) => (s.todos || []).filter((t) => !t.done).length,
+  parts.todo = {
     render(el) {
       // ---- 新增 ----
       const input = h('input', { type: 'text', class: 'todo-input', placeholder: '要做什么？按回车添加', maxlength: 200 });
@@ -128,8 +122,7 @@
       const addBtn = h('button', { class: 'btn primary' }, '添加');
       addBtn.addEventListener('click', add);
 
-      el.append(h('div', { class: 'section' },
-        h('div', { class: 'card' }, h('div', { class: 'row todo-add' }, input, when, custom, addBtn))));
+      const addCard = h('div', { class: 'card todo-add-card' }, h('div', { class: 'row todo-add' }, input, when, custom, addBtn));
 
       // ---- 列表 ----
       const openBox = h('div', { class: 'card' });
@@ -140,7 +133,7 @@
       clearBtn.addEventListener('click', () => act('todoClearDone'));
       const doneSection = h('div', { class: 'section' },
         h('div', { class: 'section-head' }, doneTitle, clearBtn), doneBox);
-      el.append(h('div', { class: 'section' }, openTitle, openBox), doneSection);
+      el.append(h('div', { class: 'section' }, openTitle, addCard, openBox), doneSection);
 
       let lastSig = '';
       watch((s) => {
@@ -158,7 +151,7 @@
           return a.createdAt - b.createdAt;
         });
         const done = list.filter((t) => t.done).sort((a, b) => b.doneAt - a.doneAt);
-        openTitle.textContent = `待办（${open.length}）`;
+        openTitle.textContent = `待办${open.length ? `（${open.length}）` : ''}`;
         doneTitle.textContent = `已完成（${done.length}）`;
         openBox.textContent = '';
         if (!open.length) openBox.append(h('div', { class: 'note' }, '没有待办，轻松一下吧 ✻'));
@@ -168,7 +161,6 @@
         doneSection.classList.toggle('hidden', !done.length);
       });
 
-      setTimeout(() => input.focus(), 50);
     },
-  });
+  };
 })();

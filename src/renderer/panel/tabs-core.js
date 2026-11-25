@@ -1,10 +1,13 @@
-// 控制面板：常规、提醒、Claude Code、关于
+// 控制面板：设置页（照顾自己、外观与行为、Claude Code、勿扰、关于）
+// 以前是 5 个单独的页面，现在是一页里的 5 个小节，顶上有小导航
 (() => {
   'use strict';
 
   const {
-    h, row, section, toggle, select, number, button, text, status, toast, act, ago, hhmm, addTab, drawClawd, watch,
+    h, row, section, toggle, select, number, button, text, status, toast, act, ago, hhmm, parts, watch,
   } = window.ClawdPanel;
+  parts.settings = parts.settings || [];
+  const addPart = (p) => parts.settings.push(p);
 
   const S = (s) => s.settings;
 
@@ -26,29 +29,16 @@
     return h('span', { class: 'ctrl' }, month, day, clear);
   }
 
-  function outfitPreview() {
-    const canvas = h('canvas', { class: 'clawd-preview', width: 64, height: 56 });
-    watch((s) => {
-      const { outfits } = window.Clawd;
-      const fest = S(s).festival !== false ? outfits.festival(new Date(), S(s).birthday || '') : null;
-      const o = S(s).outfit || {};
-      drawClawd(canvas, { hat: (fest && fest.hat) || (o.hat !== 'none' ? o.hat : ''), face: o.face !== 'none' ? o.face : '' });
-    });
-    return canvas;
-  }
-
-  // ================= 常规 =================
-  addTab({
-    id: 'general',
-    order: 10,
-    title: '常规',
-    icon: 'general',
-    subtitle: 'Clawd 的样子和习惯',
+  // ================= 外观与行为 =================
+  addPart({
+    id: 'look',
+    order: 20,
+    title: '外观与行为',
     render(el) {
       el.append(
         section('外观',
-          row('大小', '像素点的大小', select([['small', '小'], ['medium', '中'], ['large', '大']], (s) => S(s).size, (v) => act('setSize', v))),
-          row('头顶时钟', '点时钟会说出完整日期', toggle((s) => S(s).clock, (v) => act('setFlag', 'clock', v))),
+          row('大小', '中号 80×50，小号 64×40，大号 112×70', select([['small', '小'], ['medium', '中'], ['large', '大']], (s) => S(s).size, (v) => act('setSize', v))),
+          row('头顶时钟', '时间、今日三环和连续打卡天数；点一下看详细进度', toggle((s) => S(s).clock, (v) => act('setFlag', 'clock', v))),
           row('整点报时', '每到整点跳一下报时', toggle((s) => S(s).chime, (v) => act('setFlag', 'chime', v)))),
         section('行为',
           row('散步模式', '站在任务栏上走来走去', toggle((s) => S(s).walk, (v) => act('setWalk', v))),
@@ -64,14 +54,13 @@
             button((s) => (s.petVisible ? '藏起来' : '叫出来'), () => act('togglePet')),
           ),
           row('打个招呼', '让它在桌面上跳支舞', button('跳个舞', () => act('petCommand', 'dance')))),
-        section('装扮',
+        section('节日',
           h('div', { class: 'row' },
-            outfitPreview(),
             h('div', { class: 'label' },
               h('b', {}, '节日自动换装'),
               text((s) => {
                 const f = window.Clawd.outfits.festival(new Date(), S(s).birthday || '');
-                return f ? `今天是${f.name}，戴${window.Clawd.outfits.ITEMS[f.hat].name}` : '元旦、春节、情人节、万圣节、圣诞、中秋、你的生日会自动戴上节日帽';
+                return f ? `今天是${f.name}，戴${window.Clawd.outfits.ITEMS[f.hat].name}` : '元旦、春节、情人节、万圣节、圣诞、中秋、你的生日会自动戴上节日帽，戴过的收进衣柜';
               }, { class: 'small-muted' })),
             h('div', { class: 'ctrl' }, toggle((s) => S(s).festival !== false, (v) => act('setFlag', 'festival', v)))),
           row('你的生日', '那天 Clawd 会戴派对帽给你庆祝', birthdayPicker())),
@@ -101,7 +90,7 @@
     }).catch(() => {});
   }
 
-  // ================= 提醒 =================
+  // ================= 照顾自己（三环的目标 + 提醒） =================
   const intervalOptions = (unit = '分钟') => [[0, '关闭'], [20, `每 20 ${unit}`], [30, `每 30 ${unit}`], [45, `每 45 ${unit}`], [60, `每 60 ${unit}`], [90, `每 90 ${unit}`], [120, `每 120 ${unit}`]];
 
   function reminderStatus(s, kind) {
@@ -115,26 +104,31 @@
 
   const today = (s, key) => (s.today && s.today[key]) || 0;
 
-  addTab({
-    id: 'reminders',
-    order: 20,
-    title: '提醒',
-    icon: 'bell',
-    subtitle: '到点了 Clawd 会举牌子提醒你，点它一下就算处理了',
-    badge: (s) => Object.values(s.reminders || {}).filter((r) => r && r.pending).length,
+  const care = (s) => S(s).care || {};
+  const growthCfg = (s) => ((s.growth && s.growth.config) || {});
+
+  addPart({
+    id: 'care',
+    order: 10,
+    title: '照顾自己',
     render(el) {
       el.append(
-        section('喝水',
+        section('今日三环的目标',
+          row('💧 喝水', '每天喝几杯', number((s) => S(s).waterGoal, (v) => act('setWaterGoal', v), { min: 1, max: 20, suffix: '杯' })),
+          row('🚶 活动', '起来走走、看看远处，各算一次', number((s) => care(s).moveGoal || 4, (v) => act('careSet', { moveGoal: v }), { min: 1, max: 20, suffix: '次' })),
+          row('⏱ 专注', '专注计时 + Claude Code 干活的时间', number((s) => care(s).focusGoal || 60, (v) => act('careSet', { focusGoal: v }), { min: 5, max: 600, step: 5, suffix: '分钟' })),
+          row('周末休息不断签', '周六、周日没合环不算断', toggle((s) => growthCfg(s).weekendRest !== false, (v) => act('growthSet', { weekendRest: v }))),
+          row('早安和晚间播报', '早上第一次见面打个招呼；晚上 8 点还没打卡会提醒一次', toggle((s) => growthCfg(s).morning !== false, (v) => act('growthSet', { morning: v })))),
+        section('喝水提醒',
           row('提醒间隔', '到点 Clawd 举起水杯，点它就“喝掉”',
             select(intervalOptions(), (s) => (S(s).reminders || {}).water || 0, (v) => act('setReminder', 'water', v))),
-          row('每天目标', '喝够了会说“目标达成”', number((s) => S(s).waterGoal, (v) => act('setWaterGoal', v), { min: 1, max: 20, suffix: '杯' })),
           row(
             text((s) => `今天喝了 ${(s.today && s.today.water) || 0} / ${S(s).waterGoal} 杯`),
             null,
             status((s) => reminderStatus(s, 'water')),
             button('我刚喝过水', () => act('petCommand', 'drink')),
           )),
-        section('久坐',
+        section('久坐提醒',
           row('连续用电脑多久提醒', '只算你在用电脑的时间；离开 5 分钟就算活动过了，重新计时',
             select([[0, '关闭'], [30, '30 分钟'], [45, '45 分钟'], [60, '60 分钟'], [90, '90 分钟'], [120, '120 分钟']],
               (s) => (S(s).reminders || {}).sit || 0, (v) => act('setReminder', 'sit', v))),
@@ -146,7 +140,7 @@
             text((s) => `今天起来活动了 ${today(s, 'sitBreaks')} 次`),
             status((s) => reminderStatus(s, 'sit')),
           )),
-        section('护眼',
+        section('护眼提醒',
           row('20-20-20 护眼', '每用 20 分钟电脑，看 6 米外的地方 20 秒；点 Clawd 开始倒计时',
             toggle((s) => ((S(s).reminders || {}).eye || 0) > 0, (v) => act('setReminder', 'eye', v ? 20 : 0))),
           row(
@@ -170,12 +164,11 @@
     return ['ok', '已接入'];
   }
 
-  addTab({
+  addPart({
     id: 'claude',
     order: 30,
     title: 'Claude Code',
-    icon: 'terminal',
-    subtitle: 'Claude Code 干活时 Clawd 陪着敲键盘，做完了跳起来喊你，等你批准时举手',
+    desc: 'Claude Code 干活时 Clawd 陪着敲键盘，做完了跳起来喊你，等你批准时举手；干活的时间也算进专注环',
     render(el) {
       const cfg = (s) => S(s).claudeCode || {};
       el.append(
@@ -239,12 +232,10 @@
     return h('span', { class: 'ctrl' }, input, save);
   }
 
-  addTab({
+  addPart({
     id: 'about',
-    order: 100,
-    title: '关于',
-    icon: 'info',
-    subtitle: 'Claude Code 吉祥物 Clawd 的桌面小组件',
+    order: 50,
+    title: '关于和更新',
     render(el) {
       el.append(
         section('',
@@ -271,7 +262,7 @@
   'use strict';
 
   const {
-    h, row, section, toggle, select, button, status, hhmm, addTab, act,
+    h, row, section, toggle, select, button, status, hhmm, addTab, act, parts, watch,
   } = window.ClawdPanel;
 
   const REASON = {
@@ -289,13 +280,11 @@
     return ['warn', `${REASON[d.reason] || '勿扰中'}${what}`];
   }
 
-  addTab({
+  parts.settings.push({
     id: 'dnd',
-    order: 25,
+    order: 40,
     title: '勿扰',
-    icon: 'moon',
-    subtitle: '看视频、玩游戏、开会时 Clawd 自动躲起来，提醒也先攒着',
-    badge: (s) => ((s.dnd || {}).active ? '·' : ''),
+    desc: '看视频、玩游戏、开会时 Clawd 自动躲起来，提醒也先攒着',
     render(el) {
       const d = (s) => s.dnd || {};
       el.append(
@@ -316,6 +305,41 @@
               button('2 小时', () => act('dndManual', 120)),
               button('到明早', () => act('dndManual', 'tomorrow'))))),
       );
+    },
+  });
+})();
+
+// ================= 设置页：把上面几个小节放在一页里 =================
+(() => {
+  'use strict';
+
+  const { h, addTab, parts } = window.ClawdPanel;
+
+  addTab({
+    id: 'settings',
+    order: 40,
+    title: '设置',
+    icon: 'general',
+    subtitle: '目标、提醒、外观、Claude Code、勿扰',
+    render(el) {
+      const list = [...(parts.settings || [])].sort((a, b) => a.order - b.order);
+      const main = document.getElementById('main');
+      const chips = list.map((p) => {
+        const b = h('button', { class: 'chip-btn' }, p.title);
+        b.addEventListener('click', () => {
+          const t = el.querySelector(`[data-anchor="${p.id}"]`);
+          if (t) main.scrollTo({ top: t.offsetTop - 64, behavior: 'smooth' });
+        });
+        return b;
+      });
+      el.append(h('div', { class: 'subnav' }, chips));
+      for (const p of list) {
+        const box = h('div', { class: 'part', 'data-anchor': p.id },
+          h('h1', { class: 'part-title' }, p.title),
+          p.desc ? h('p', { class: 'part-desc' }, p.desc) : null);
+        p.render(box);
+        el.append(box);
+      }
     },
   });
 })();

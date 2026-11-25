@@ -5,7 +5,7 @@
   const C = (window.Clawd = window.Clawd || {});
   const { sprite, ui } = C;
   const { LINES, FOCUS_VERBS, rand, pick, greeting, clickLine, hourLine, mmss } = C.lines;
-  const { bubble, clock, particle } = ui;
+  const { bubble, clock, particle, confetti } = ui;
 
   // 在 Electron 里用 preload 暴露的 API；直接用浏览器打开页面时用一个假的，方便预览
   const api = window.clawd || createMockApi();
@@ -19,42 +19,36 @@
   const propCtx = propEl.getContext('2d');
   const hatEl = document.getElementById('hat');
   const hatCtx = hatEl.getContext('2d');
-  const giftEl = document.getElementById('gift');
-  const giftCtx = giftEl.getContext('2d');
   const { outfits } = C;
 
   let scale = 7;
   let dpr = window.devicePixelRatio || 1;
+  let pad = 2; // 画布四周给描边留的空（CSS 像素）
   let lastPoseKey = '';
   let lastPropKey = '';
+  const shadowEl = document.getElementById('shadow');
+
+  // 画布比格子大一圈（描边画在外面），CSS 里用负 margin 抵消，位置不变
+  function sizeCanvas(el, w, h) {
+    el.width = Math.round((w + 2 * pad) * dpr);
+    el.height = Math.round((h + 2 * pad) * dpr);
+    el.style.width = `${w + 2 * pad}px`;
+    el.style.height = `${h + 2 * pad}px`;
+  }
+  const renderTo = (context, cols, rows, list) => sprite.render(context, cols, rows, list, { pad: pad * dpr });
 
   function resizeCanvas() {
     dpr = window.devicePixelRatio || 1;
+    pad = sprite.padFor(scale);
     const w = sprite.GRID_W * scale;
     const h = sprite.GRID_H * scale;
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
-    canvas.style.width = `${w}px`;
-    canvas.style.height = `${h}px`;
+    sizeCanvas(canvas, w, h);
     root.style.setProperty('--s', `${scale}px`);
     root.style.setProperty('--pw', `${w}px`);
     root.style.setProperty('--ph', `${h}px`);
-    propEl.width = Math.round(sprite.CUP_W * scale * dpr);
-    propEl.height = Math.round(sprite.CUP_H * scale * dpr);
-    propEl.style.width = `${sprite.CUP_W * scale}px`;
-    propEl.style.height = `${sprite.CUP_H * scale}px`;
-    hatEl.width = Math.round(outfits.HAT_W * scale * dpr);
-    hatEl.height = Math.round(outfits.HAT_H * scale * dpr);
-    hatEl.style.width = `${outfits.HAT_W * scale}px`;
-    hatEl.style.height = `${outfits.HAT_H * scale}px`;
-    // 礼物盒比小人小一点
-    const gs = Math.max(3, Math.round(scale * 0.75));
-    giftEl.width = Math.round(sprite.GIFT_W * gs * dpr);
-    giftEl.height = Math.round(sprite.GIFT_H * gs * dpr);
-    giftEl.style.width = `${sprite.GIFT_W * gs}px`;
-    giftEl.style.height = `${sprite.GIFT_H * gs}px`;
-    root.style.setProperty('--gw', `${sprite.GIFT_W * gs}px`);
-    lastGiftKey = '';
+    root.style.setProperty('--pad', `${pad}px`);
+    sizeCanvas(propEl, sprite.CUP_W * scale, sprite.CUP_H * scale);
+    sizeCanvas(hatEl, outfits.HAT_W * scale, outfits.HAT_H * scale);
     lastPoseKey = '';
     lastPropKey = '';
     lastHatKey = '';
@@ -81,20 +75,70 @@
     return value;
   }
 
-  // 头顶的帽子跟着身体上下动（呼吸、坐下）
+  // 头顶的帽子跟着身体上下动（坐下、压扁、呼吸）
+  let hatTop = 0;
+  let hatShift = '';
   function drawHat(hat, pose) {
-    const top = (pose.sit ? 2 : 0) + (pose.squish ? 1 : 0);
-    const key = `${hat}|${top}|${scale}`;
+    hatTop = (pose.sit ? 2 : 0) + (pose.squish ? 1 : 0);
+    const key = `${hat}|${scale}|${dpr}`;
     if (key === lastHatKey) return;
     lastHatKey = key;
     hatEl.classList.toggle('show', !!hat);
     root.style.setProperty('--hat-h', hat ? `${(outfits.HAT_H - outfits.HAT_OVERLAP) * scale}px` : '0px');
     if (!hat) return;
-    hatEl.style.transform = `translateY(${top * scale}px)`;
-    sprite.paint(hatCtx, outfits.HAT_W, outfits.HAT_H, outfits.hatPixels(hat));
+    renderTo(hatCtx, outfits.HAT_W, outfits.HAT_H, outfits.hatPixels(hat));
   }
 
-  // 遇到节日：告诉主进程（节日帽收进衣柜 + 经验）
+  // ================= 呼吸 =================
+  // 以前是每 0.6 秒整个身体塌一格（7 像素），一跳一跳的；现在用平滑的缩放，像真的在喘气
+  const BREATH = {
+    idle: { amp: 0.035, period: 2300 },
+    sit: { amp: 0.04, period: 2700 },
+    sleep: { amp: 0.06, period: 3200 },
+    sulk: { amp: 0.05, period: 2900 },
+    tired: { amp: 0.05, period: 2700 },
+    pant: { amp: 0.06, period: 560 },
+  };
+  let breathKey = '';
+  function applyBreath(now, pose) {
+    const b = pose.breath && BREATH[pose.breath];
+    let sx = 1;
+    let sy = 1;
+    if (b) {
+      const t = (Math.sin((now / b.period) * Math.PI * 2) + 1) / 2;
+      sy = 1 - b.amp * t;
+      sx = 1 + b.amp * 0.35 * t;
+    }
+    // 身体缩下去多少，帽子就跟着往下多少
+    const lift = (1 - sy) * sprite.GRID_H * scale;
+    const key = `${sx.toFixed(4)}|${sy.toFixed(4)}`;
+    if (key !== breathKey) {
+      breathKey = key;
+      canvas.style.transform = b ? `scale(${sx.toFixed(4)}, ${sy.toFixed(4)})` : '';
+    }
+    const shift = `translateY(${(hatTop * scale + lift).toFixed(2)}px)`;
+    if (shift !== hatShift) {
+      hatShift = shift;
+      hatEl.style.transform = shift;
+    }
+  }
+
+  // ================= 脚下的影子 =================
+  // 跳起来时影子变小变淡；被拖着、掉下来时不画
+  let shadowKey = '';
+  function drawShadow() {
+    const air = ['drag', 'fall', 'jumpUp'].includes(S.mode);
+    const r = petEl.getBoundingClientRect();
+    const lift = Math.max(0, window.innerHeight - r.bottom);
+    const k = air ? 0 : Math.max(0.45, 1 - lift / (sprite.GRID_H * scale));
+    const key = k.toFixed(3);
+    if (key === shadowKey) return;
+    shadowKey = key;
+    shadowEl.style.opacity = String(air ? 0 : k);
+    shadowEl.style.transform = `translate(-50%, 50%) scale(${k.toFixed(3)})`;
+  }
+
+  // 遇到节日：告诉主进程（节日帽收进衣柜）
   let festivalReportedOn = '';
   function reportFestival() {
     const f = currentOutfit().festival;
@@ -114,48 +158,35 @@
     return f.line;
   }
 
-  // 当前皮肤（小卖部买的 / 打卡和成就解锁的）
+  // 当前皮肤（衣柜里穿的；没拥有的不显示）
   function skinId() {
-    const g = S.settings.growth || {};
-    return g.skin && sprite.SKINS[g.skin] ? g.skin : 'classic';
+    const id = (S.settings.outfit || {}).skin;
+    return id && sprite.SKINS[id] && (id === 'classic' || (S.settings.unlocked || []).includes(id)) ? id : 'classic';
   }
 
   function draw(pose) {
-    const p = { ...pose, skin: skinId() };
+    const { breath, ...rest } = pose; // eslint-disable-line no-unused-vars
+    const p = { ...rest, skin: skinId() };
     const key = JSON.stringify(p);
     if (key === lastPoseKey) return;
     lastPoseKey = key;
-    sprite.paint(ctx, sprite.GRID_W, sprite.GRID_H, sprite.pixels(p));
+    renderTo(ctx, sprite.GRID_W, sprite.GRID_H, sprite.pixels(p));
   }
 
-  // prop: null（不拿东西）、水杯 { level, bottom } 或零食 { snack, bites, bottom }，bottom 以像素格为单位
+  // prop: null（不拿东西）或水杯 { level, bottom }，bottom 以像素格为单位
   function drawProp(prop) {
-    const key = prop ? `${prop.snack || 'cup'}|${prop.snack ? prop.bites : prop.level}|${prop.bottom}` : 'none';
+    const key = prop ? `${prop.level}|${prop.bottom}|${scale}|${dpr}` : 'none';
     if (key === lastPropKey) return;
     lastPropKey = key;
     propEl.classList.toggle('show', !!prop);
     if (!prop) return;
     propEl.style.bottom = `${prop.bottom * scale}px`;
-    sprite.paint(propCtx, sprite.CUP_W, sprite.CUP_H, prop.snack ? sprite.snackPixels(prop.snack, prop.bites) : sprite.cupPixels(prop.level));
-  }
-
-  // 礼物盒：放在小人左边的地上
-  let lastGiftKey = '';
-  function drawGift() {
-    const show = !!S.gift && !S.walking && ['idle', 'react', 'dance', 'sit', 'sleep', 'eat', 'wave'].includes(S.mode);
-    const open = !!S.giftOpening;
-    const key = `${show}|${open}`;
-    if (key === lastGiftKey) return;
-    lastGiftKey = key;
-    giftEl.classList.toggle('show', show);
-    giftEl.classList.toggle('opening', open);
-    if (show) sprite.paint(giftCtx, sprite.GIFT_W, sprite.GIFT_H, sprite.giftPixels(open));
+    renderTo(propCtx, sprite.CUP_W, sprite.CUP_H, sprite.cupPixels(prop.level));
   }
 
   // ================= 状态 =================
   const SLEEP_AFTER_S = 90; // 电脑空闲多久后睡觉
-  const TIMED_MODES = ['react', 'dance', 'drink', 'stretch', 'yawn', 'wave', 'sit', 'sulk', 'eat']; // 到时间自动回到 idle 的模式
-  const EAT_MS = 2600;
+  const TIMED_MODES = ['react', 'dance', 'drink', 'stretch', 'yawn', 'wave', 'sit', 'sulk']; // 到时间自动回到 idle 的模式
   const IDLE_ACTS = ['yawn', 'wave', 'sit', 'sulk']; // 闲着时的小动作：有正事就马上停
   const EYE_REST_MS = 20000;
 
@@ -384,7 +415,7 @@
       const wasWaiting = ccWaiting();
       S.cc = { active: d.active || 0, top: d.top || null };
       if (ccWaiting() && !wasWaiting) {
-        // 正在庆祝（任务、成就…）：先让位给“等你批准”，庆祝放回队列，批准完再说
+        // 正在庆祝（合环、打卡…）：先让位给“等你批准”，庆祝放回队列，批准完再说
         if (S.announcing && performance.now() < S.announcing.until) {
           bubble.hush();
           S.announces.unshift({ ...S.announcing.a, notBefore: 0 });
@@ -591,7 +622,7 @@
   }
 
   // ================= 行为 =================
-  // 互动：给主进程记经验和心情（每天有上限）
+  // 互动：告诉主进程（现在只是玩，不算分）
   const interact = (kind) => { if (api.interact) api.interact(kind); };
 
   function react() {
@@ -821,7 +852,6 @@
 
   function currentPose(now) {
     const blink = now < S.blinkUntil;
-    const breathe = Math.floor(now / 600) % 2 === 1;
 
     switch (S.mode) {
       case 'drag': {
@@ -833,16 +863,11 @@
       case 'jumpUp':
         return { eyes: 'happy', armL: 'up', armR: 'up', legs: 'walkA' };
       case 'sleep':
-        return { eyes: 'closed', squish: Math.floor(now / 1100) % 2 === 1 };
+        return { eyes: 'closed', breath: 'sleep' };
       case 'react':
         return { eyes: 'happy', blush: true, armL: 'up', armR: 'up' };
       case 'drink':
         return { eyes: 'happy', blush: true, look: 1, armR: 'up' };
-      case 'eat': {
-        // 啊呜啊呜：嘴一张一合
-        const f = Math.floor(now / 230) % 2;
-        return { eyes: 'happy', blush: true, look: 1, armR: 'mid', mouth: f ? 'o' : 'small', squish: f === 1 };
-      }
       case 'stretch': {
         const f = Math.floor(now / 600) % 2;
         return { eyes: f ? 'closed' : 'happy', armL: 'up', armR: 'up', squish: false };
@@ -859,13 +884,13 @@
         return { eyes: 'happy', armR: f ? 'up' : 'mid', look: S.cursorLook };
       }
       case 'sulk':
-        return { eyes: 'sad', look: 0, squish: Math.floor(now / 1200) % 2 === 1 };
+        return { eyes: 'sad', look: 0, breath: 'sulk' };
       case 'sit':
-        return { sit: true, eyes: blink ? 'blink' : (now < S.lookUpUntil ? 'up' : 'open'), look: S.look, squish: Math.floor(now / 1000) % 2 === 1 };
+        return { sit: true, eyes: blink ? 'blink' : (now < S.lookUpUntil ? 'up' : 'open'), look: S.look, breath: 'sit' };
       case 'eyeRest': {
         // 慢慢左右看远处
         const f = Math.floor(now / 2500) % 3;
-        return { eyes: blink ? 'blink' : 'up', look: [-1, 0, 1][f], squish: breathe };
+        return { eyes: blink ? 'blink' : 'up', look: [-1, 0, 1][f], breath: 'idle' };
       }
       case 'dance': {
         const f = Math.floor(now / 200) % 2;
@@ -892,19 +917,19 @@
     // 有提醒：按提醒的样子摆姿势（比如举着水杯）
     const rem = activeReminder();
     if (rem) {
-      return REMINDERS[rem].pose({ eyes: blink ? 'blink' : 'open', squish: breathe });
+      return REMINDERS[rem].pose({ eyes: blink ? 'blink' : 'open', breath: 'idle' });
     }
     // 鼠标在身上停留 = 被摸头
     if (S.hoverSince && now - S.hoverSince > 900) {
-      return { eyes: 'happy', blush: true, squish: breathe };
+      return { eyes: 'happy', blush: true, breath: 'idle' };
     }
     // 电脑太忙：流汗、喘气
     if (SYS.hot && !S.focus && !ccWorking()) {
-      return { eyes: blink ? 'blink' : 'open', sweat: true, squish: Math.floor(now / 280) % 2 === 1, look: S.look };
+      return { eyes: blink ? 'blink' : 'open', sweat: true, breath: 'pant', look: S.look };
     }
     // 电量低：没精神
     if (lowBattery() && !S.focus && !ccWorking()) {
-      return { eyes: 'blink', squish: Math.floor(now / 1100) % 2 === 1 };
+      return { eyes: 'blink', breath: 'tired' };
     }
     if (S.focus || ccWorking()) {
       // 专注时两只手交替敲键盘
@@ -912,15 +937,11 @@
       return { eyes, armL: f ? 'mid' : 'down', armR: f ? 'down' : 'mid' };
     }
     const sad = (S.settings.mood == null ? 70 : S.settings.mood) < 30 && eyes === 'open' && Math.floor(now / 4000) % 3 === 0;
-    return { eyes: sad ? 'sad' : (eyes === 'open' && now < S.lookUpUntil ? 'up' : eyes), look: S.look, squish: breathe };
+    return { eyes: sad ? 'sad' : (eyes === 'open' && now < S.lookUpUntil ? 'up' : eyes), look: S.look, breath: 'idle' };
   }
 
   // 手里的水杯：提醒时拿在身边，喝水时举高、水位慢慢下降
   function currentProp(now, pose) {
-    if (S.mode === 'eat' && S.eating) {
-      const t = 1 - Math.max(0, S.modeUntil - now) / EAT_MS;
-      return { snack: S.eating.id, bites: Math.min(3, Math.floor(t * 4)), bottom: 3 };
-    }
     if (S.mode === 'drink') {
       const t = 1 - Math.max(0, S.modeUntil - now) / DRINK_MS;
       return { level: Math.max(0, 3 - Math.floor(t * 4)), bottom: 5 };
@@ -1070,8 +1091,7 @@
     return inRect(petEl.getBoundingClientRect(), x, y, 3)
       || (bubble.visible && inRect(bubble.el.getBoundingClientRect(), x, y, 2))
       || (!clock.el.classList.contains('hidden') && inRect(clock.el.getBoundingClientRect(), x, y, 2))
-      || (propEl.classList.contains('show') && inRect(propEl.getBoundingClientRect(), x, y, 2))
-      || (giftEl.classList.contains('show') && inRect(giftEl.getBoundingClientRect(), x, y, 3));
+      || (propEl.classList.contains('show') && inRect(propEl.getBoundingClientRect(), x, y, 2));
   }
 
   window.addEventListener('mousemove', (e) => {
@@ -1111,7 +1131,7 @@
   }
 
   // ================= 成长：公告队列 =================
-  // 几件好事同时发生（任务完成 + 打卡 + 宝箱）时一句一句说，不互相顶掉
+  // 公告队列：几句话一句一句说，不互相顶掉
   S.announces = [];
   function announce(text, { celebrate = false, delay = 800, ms = 5200, glyph = '' } = {}) {
     S.announces.push({ text, celebrate, ms, glyph, notBefore: performance.now() + delay });
@@ -1127,91 +1147,82 @@
     S.announcing = { a, until: now + a.ms };
     if (a.celebrate) {
       dance(3000);
-      for (let i = 0; i < 6; i++) setTimeout(() => particle('✦', 'spark', rand(0.05, 0.95)), i * 160);
+      confetti(20);
+      for (let i = 0; i < 3; i++) setTimeout(() => particle('✦', 'spark', rand(0.1, 0.9)), 200 + i * 220);
     } else {
       setMode('react', 650);
     }
-    bubble.say(a.glyph ? `${a.glyph} ${a.text}` : a.text, a.ms);
+    bubble.say(a.glyph ? `${a.glyph} ${a.text}` : a.text, a.ms, { tone: a.celebrate ? 'celebrate' : '' });
     // 下一句至少隔一会儿
     if (S.announces[0]) S.announces[0].notBefore = Math.max(S.announces[0].notBefore, now + a.ms + 600);
   }
 
-  const SNACK_EMOJI = { cookie: '🍪', fish: '🐟', pudding: '🍮', cake: '🍰' };
-  const SNACK_NAME = { cookie: '饼干', fish: '小鱼干', pudding: '布丁', cake: '蛋糕' };
+  // 同一时刻发生的几件好事（合环 + 打卡 + 升级）合成一句话说，不连着弹三个气泡
+  let batch = [];
+  let batchTimer = null;
+  function queueCelebration(ev) {
+    batch.push(ev);
+    clearTimeout(batchTimer);
+    batchTimer = setTimeout(flushCelebration, 60);
+  }
 
-  function eat(d) {
-    if (S.mode === 'sleep') wakeUp();
-    S.eating = { id: d.id, favorite: !!d.favorite };
-    setMode('eat', EAT_MS);
-    bubble.say(d.favorite ? `是${d.name || SNACK_NAME[d.id]}！今天最想吃的就是这个 💕` : `啊呜——${d.name || SNACK_NAME[d.id]}好好吃！`, 3200);
-    const n = d.favorite ? 6 : 3;
-    for (let i = 0; i < n; i++) setTimeout(() => particle('♥', 'heart', rand(0.3, 0.9)), 300 + i * 260);
+  function flushCelebration() {
+    const evs = batch;
+    batch = [];
+    const lines = [];
+    let big = false;
+    for (const ev of evs) {
+      if (ev.type === 'ring') lines.push(`${ev.icon} ${ev.name}环合上了　+${ev.stars}✦`);
+      if (ev.type === 'checkin') {
+        big = true;
+        lines.push(`今天打卡成功 🔥${ev.streak}`);
+        if (ev.milestone) lines.push(`连续 ${ev.milestone.days} 天！奖励 +${ev.milestone.stars}✦`);
+        if (ev.freeze) lines.push('攒到一张补签卡 🎫 哪天忘了也不怕');
+      }
+      if (ev.type === 'allrings') { big = true; lines.push(`三环全满！完美的一天　+${ev.stars}✦`); }
+      if (ev.type === 'levelup') { big = true; lines.push(`升到 Lv.${ev.level} 了 ✨`); }
+      if (ev.type === 'unlock') { big = true; lines.push(`衣柜里多了「${ev.name}」（${ev.why}）`); }
+    }
+    if (lines.length) announce(lines.join('\n'), { celebrate: big, delay: 900, ms: big ? 6000 : 4000 });
   }
 
   function onGrowth(ev = {}) {
     switch (ev.type) {
-      case 'welcome': {
-        let t = `成长系统升级啦！每天 3 个小任务、连续打卡 🔥、小卖部和成就。送你 ${ev.stars}✦ 和一块饼干 🍪，右键喂我吧～`;
-        if (ev.achievements) t += `\n以前的努力也算数：解锁了 ${ev.achievements} 个成就（+${ev.achievementStars}✦）`;
-        announce(t, { celebrate: true, delay: 5600, ms: 9000 });
+      case 'welcome':
+        announce(ev.upgraded
+          ? 'Clawd 3.0：成长改成了「今日三环」💧🚶⏱\n你的 ✦、装扮和连续天数都还在 ✻'
+          : '你好，我是 Clawd ✻\n每天陪你合上三个环：💧喝水 🚶活动 ⏱专注\n合上两个就算打卡～', { delay: 5600, ms: 8000 });
         break;
-      }
       case 'morning': {
         const lines = [];
-        if (ev.note && ev.note.kind === 'broken' && ev.note.was > 1) lines.push(`之前连续打卡 ${ev.note.was} 天断掉了…没关系，今天重新开始 💪`);
-        if (ev.note && ev.note.kind === 'freeze') lines.push(`用掉 ${ev.note.used} 张补签卡，🔥${ev.note.streak} 天保住啦！`);
-        lines.push(`今天的任务：${(ev.quests || []).join('、')}`);
-        if (ev.streak) lines.push(`🔥 已经连续 ${ev.streak} 天，完成 2 个任务就能续上`);
-        announce(lines.join('\n'), { delay: 300, ms: 8000, glyph: '☀' });
+        const n = ev.note;
+        if (n && n.kind === 'broken' && n.was > 1) lines.push(`之前连续 ${n.was} 天断掉了…没关系，今天重新开始 💪`);
+        if (n && n.kind === 'freeze') lines.push(`用掉 ${n.used} 张补签卡，🔥${n.streak} 天保住啦`);
+        const y = ev.yesterday;
+        if (!lines.length && y && y.all) lines.push('昨天三环全满，太厉害了！');
+        lines.push(ev.streak ? `早安 ☀ 今天也一起合环吧　🔥${ev.streak}` : '早安 ☀ 今天也一起合环吧');
+        announce(lines.join('\n'), { delay: 300, ms: 5500 });
         break;
       }
-      case 'quest':
-        announce(`任务完成：${ev.title}　+${ev.stars}✦${ev.left ? `（还剩 ${ev.left} 个）` : ''}`, { glyph: '✓', delay: 1200, ms: 4200 });
-        break;
-      case 'checkin': {
-        let t = `今天打卡成功！🔥 连续 ${ev.streak} 天`;
-        if (ev.milestone) t += `\n连续 ${ev.milestone.days} 天的奖励：${ev.milestone.stars}✦${ev.milestone.skin === 'gold' ? '，还解锁了金色皮肤！' : ''}`;
-        if (ev.freeze) t += '\n攒到一张补签卡 🎫 偶尔忘了也不怕';
-        announce(t, { celebrate: true, ms: 6000 });
+      case 'evening': {
+        const near = ev.near;
+        let t = near ? `再${near.left} ${near.unit}${near.name}，${near.icon}环就合上了` : '今天还差一点就能打卡';
+        if (near && ev.need === 1) t += '，今天就算打卡';
+        if (ev.streak) t += `\n🔥${ev.streak} 天别断哦～`;
+        announce(t, { glyph: '🌙', delay: 300, ms: 6000 });
         break;
       }
-      case 'chest':
-        announce(`三个任务全部完成！🧰 宝箱里有 ${ev.stars}✦ 和一个${SNACK_EMOJI[ev.snack] || ''}${SNACK_NAME[ev.snack] || ''}`, { celebrate: true, ms: 6000 });
-        break;
-      case 'achievement':
-        announce(`成就解锁 ${ev.icon}「${ev.name}」　+${ev.stars}✦`, { celebrate: true, ms: 5000 });
-        break;
-      case 'skin':
-        announce(`解锁新皮肤：${ev.name} ✨ 去衣柜换上试试`, { celebrate: true });
-        break;
-      case 'feed':
-        eat(ev);
-        break;
-      case 'gift':
-        announce(`礼物里是：${ev.reward && ev.reward.text}！`, { celebrate: true, delay: 900, glyph: '🎁' });
-        break;
-      case 'bought':
-        announce(ev.kind === 'skin' ? `换上${ev.name}啦，好看吗？` : `谢谢！${ev.name}我很喜欢 💕`, { delay: 200, ms: 3500 });
+      case 'ring':
+      case 'checkin':
+      case 'allrings':
+      case 'levelup':
+      case 'unlock':
+        queueCelebration(ev);
         break;
       default:
         break;
     }
   }
-
-  async function openGift() {
-    if (!S.gift || S.giftOpening) return;
-    S.giftOpening = true;
-    bump('jump');
-    for (let i = 0; i < 6; i++) setTimeout(() => particle('✦', 'spark', rand(-0.3, 0.2)), i * 120);
-    let r = {};
-    try { r = (await api.openGift()) || {}; } catch { /* 忽略 */ }
-    setTimeout(() => {
-      S.giftOpening = false;
-      S.gift = false;
-    }, 1400);
-    if (r.error) bubble.say(r.error, 2500);
-  }
-  giftEl.addEventListener('click', openGift);
 
   function onMenu(cmd) {
     if (cmd === 'pet') petHead();
@@ -1228,17 +1239,8 @@
   api.on('cc', onCC);
   api.on('todo', onTodo);
   api.on('sys', onSys);
-  // 升级公告：等手上这句话说完再宣布（比如喝水时升级，先说“咕嘟咕嘟”）
-  api.on('levelup', (d = {}) => {
-    const extra = d.unlocked && d.unlocked.length ? ` 解锁了：${d.unlocked.join('、')}` : '';
-    announce(`升级啦！Lv.${d.level} ✦${extra}`, { celebrate: true });
-  });
+  // 成长的好消息：等手上这句话说完再宣布（比如喝水合环，先说“咕嘟咕嘟”）
   api.on('growth', onGrowth);
-  api.on('gift', (d = {}) => {
-    const was = S.gift;
-    S.gift = !!d.show;
-    if (S.gift && !was && !d.quiet) announce('咦，地上有个礼物 🎁 点一下拆开看看！', { glyph: '🎁', delay: 400 });
-  });
   // 勿扰的“安静”模式：变淡、不说话
   api.on('quiet', (on) => document.body.classList.toggle('quiet', !!on));
   api.on('say', (text) => {
@@ -1276,10 +1278,12 @@
     if (acc.length) pose.acc = acc;
     draw(pose);
     drawHat(outfit.hat, pose);
+    applyBreath(now, pose);
     drawProp(currentProp(now, pose));
-    drawGift();
+    drawShadow();
     bubble.render(now);
-    clock.render(S.settings.clock !== false, (S.settings.growth || {}).streak || 0);
+    const gs = S.settings.growth || {};
+    clock.render(S.settings.clock !== false, gs.streak || 0, gs.rings || null);
     requestAnimationFrame(loop);
   }
 
@@ -1326,7 +1330,6 @@
     onWater: (d = {}) => onReminder({ kind: 'water', ...d }),
     drink,
     onGrowth,
-    openGift,
     skinId,
   };
 
@@ -1349,7 +1352,6 @@
       getSettings: async () => ({ size: 'medium', scale: 7, walk: false, onTop: true, clock: true, chime: true, sysAlerts: true, festival: true, birthday: '', outfit: { hat: 'none', face: 'none' } }),
       reminderDone: async () => ({ count: 1, goal: 8 }),
       todoDone: async () => ({ ok: true, left: 0 }),
-      openGift: async () => ({ ok: true, reward: { text: '20✦' } }),
       on(ch, fn) { (listeners[ch] = listeners[ch] || []).push(fn); },
       emit,
     };

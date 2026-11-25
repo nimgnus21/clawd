@@ -36,9 +36,7 @@ class Menus {
     return {
       label: '提醒',
       submenu: [
-        { label: `我刚喝过水（今天 ${this.stats.get('water')}/${goal} 杯）`, click: () => this.pet.send('menu', 'drink') },
-        { type: 'separator' },
-        { label: `喝水（${waterStatus}）`, submenu: radios('water', [30, 45, 60, 90, 0]) },
+        { label: `喝水（${waterStatus}，今天 ${this.stats.get('water')}/${goal} 杯）`, submenu: radios('water', [30, 45, 60, 90, 0]) },
         { label: `久坐（${sitStatus}）`, submenu: radios('sit', [30, 45, 60, 90, 0]) },
         {
           label: '护眼 20-20-20',
@@ -47,7 +45,7 @@ class Menus {
           click: (i) => actions.setReminder('eye', i.checked ? 20 : 0),
         },
         { type: 'separator' },
-        { label: '提醒设置…', click: () => actions.openPanel('reminders') },
+        { label: '提醒设置…', click: () => actions.openPanel('settings:care') },
       ],
     };
   }
@@ -78,7 +76,7 @@ class Menus {
         { label: '显示正在用的工具', type: 'checkbox', checked: cfg.tools, click: (i) => actions.ccSet({ tools: i.checked }) },
         { label: '完成 / 等确认时弹通知', type: 'checkbox', checked: cfg.notify, click: (i) => actions.ccSet({ notify: i.checked }) },
         { label: '打开 Claude Code 设置文件位置', click: () => shell.showItemInFolder(st.settingsFile) },
-        { label: '更多设置…', click: () => actions.openPanel('claude') },
+        { label: '更多设置…', click: () => actions.openPanel('settings:claude') },
       ],
     };
   }
@@ -117,26 +115,11 @@ class Menus {
     }];
   }
 
-  // 喂零食：列出手上有的零食
-  feedMenu() {
-    const { SNACKS } = require('./growth-catalog'); // eslint-disable-line global-require
-    const g = this.growth.raw();
-    const fav = this.growth.favoriteSnack();
-    const have = SNACKS.filter((s) => (g.snacks[s.id] || 0) > 0);
-    const items = have.map((s) => ({
-      label: `${s.emoji} ${s.name} ×${g.snacks[s.id]}${s.id === fav ? '（今天最爱）' : ''}`,
-      click: () => this.actions.growthFeed(s.id),
-    }));
-    if (!items.length) items.push({ label: '没有零食了', enabled: false });
-    items.push({ type: 'separator' }, { label: `去小卖部（${g.stars}✦）…`, click: () => this.actions.openPanel('shop') });
-    return { label: '喂零食', submenu: items };
-  }
-
-  growthLabel() {
+  // 今天三环的进度，放在菜单里一眼能看到
+  todayLabel() {
     const v = this.growth.summary();
-    const q = this.growth.questProgress();
-    const done = q.filter((x) => x.done).length;
-    return `今日任务 ${done}/${q.length}${v.streak ? `　🔥${v.streak}` : ''}…`;
+    const rings = v.rings.map((r) => `${r.icon}${r.closed ? '✓' : `${r.value}/${r.goal}`}`).join(' ');
+    return `今天 ${rings}${v.streak ? `  🔥${v.streak}` : ''}`;
   }
 
   // state 来自页面：{ focusing, focusLeft }
@@ -161,41 +144,45 @@ class Menus {
       { type: 'separator' },
     ] : [];
 
+    // 分组和面板一致：今天（照顾自己）→ 干活 → 玩 → 设置
+    const open = this.todos.open().length;
     const template = [
       ...todoItems,
-      { label: '控制面板…', click: () => actions.openPanel() },
-      { label: `待办${this.todos.open().length ? `（${this.todos.open().length}）` : ''}…`, click: () => actions.openPanel('todo') },
+      { label: this.todayLabel(), click: () => actions.openPanel('today') },
+      { label: '💧 我刚喝过水', click: () => send('drink') },
+      { label: '🚶 我起来动过了', click: () => actions.logBreak() },
+      focusItem,
+      { type: 'separator' },
+      { label: `待办${open ? `（${open}）` : ''}…`, click: () => actions.openPanel('today:todo') },
+      this.claudeCodeMenu(),
+      this.dndMenu(),
       { type: 'separator' },
       { label: '摸摸头', click: () => send('pet') },
       { label: '跳个舞', click: () => send('dance') },
-      this.feedMenu(),
-      { label: this.growthLabel(), click: () => actions.openPanel('growth') },
       { type: 'separator' },
-      this.claudeCodeMenu(),
-      this.remindersMenu(),
-      focusItem,
-      this.dndMenu(),
+      { label: '衣柜…', click: () => actions.openPanel('wardrobe') },
+      { label: '控制面板…', click: () => actions.openPanel() },
       {
-        label: '时间',
+        label: '快捷设置',
         submenu: [
+          this.remindersMenu(),
+          { type: 'separator' },
+          { label: '散步模式', type: 'checkbox', checked: settings.get('walk'), click: (i) => actions.setWalk(i.checked) },
+          {
+            label: '大小',
+            submenu: [['small', '小'], ['medium', '中'], ['large', '大']].map(([k, label]) => ({
+              label,
+              type: 'radio',
+              checked: settings.get('size') === k,
+              click: () => actions.setSize(k),
+            })),
+          },
           { label: '显示时钟', type: 'checkbox', checked: settings.get('clock'), click: (i) => actions.setFlag('clock', i.checked) },
           { label: '整点报时', type: 'checkbox', checked: settings.get('chime'), click: (i) => actions.setFlag('chime', i.checked) },
+          { label: '总在最前', type: 'checkbox', checked: settings.get('onTop'), click: (i) => actions.setOnTop(i.checked) },
+          ...this.autoStartItem(),
         ],
       },
-      { type: 'separator' },
-      { label: '散步模式', type: 'checkbox', checked: settings.get('walk'), click: (i) => actions.setWalk(i.checked) },
-      {
-        label: '大小',
-        submenu: [['small', '小'], ['medium', '中'], ['large', '大']].map(([k, label]) => ({
-          label,
-          type: 'radio',
-          checked: settings.get('size') === k,
-          click: () => actions.setSize(k),
-        })),
-      },
-      { label: '总在最前', type: 'checkbox', checked: settings.get('onTop'), click: (i) => actions.setOnTop(i.checked) },
-      ...this.autoStartItem(),
-      { type: 'separator' },
       { label: '藏到托盘', click: () => this.pet.hide() },
       { label: '退出', click: () => app.quit() },
     ];
