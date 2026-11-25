@@ -122,6 +122,28 @@
     return out;
   }
 
+  // Claude Code 干活时手里拿的道具（每种工具一样），frames = 动画帧
+  const PROP_PAL = {
+    W: '#F4F1EA', L: '#C9C1B4', B: '#4C7BD9', G: '#8A9099', D: '#5E636B', H: '#A0703C',
+    E: '#D3E6F3', V: '#45B26B', C: '#CFE8FF', K: '#6B6A65', S: '#9AA4AE',
+  };
+  const PROPS = {
+    book: { frames: [['WW.WW', 'WWLWW', 'WWLWW', 'BBBBB'], ['.WWW.', 'WWWWW', 'WWLWW', 'BBBBB']] }, // 翻书
+    hammer: { frames: [['GGG.', 'GDG.', '.H..', '.H..', '.H..']] }, // 跑命令
+    flask: { frames: [['.EE.', '.EE.', 'E..E', 'EVVE', 'EVVE'], ['.EE.', '.EE.', 'EV.E', 'EVVE', 'EVVE']] }, // 跑测试
+    magnifier: { frames: [['.KK.', 'KCCK', 'KCCK', '.KK.', '...H']] }, // 查资料
+    clipboard: { frames: [['.SS.', 'WWWW', 'WKKW', 'WWWW', 'WKKW']] }, // 列清单
+    wrench: { frames: [['G.G.', 'GGG.', '.G..', '.G..', '.G..']] }, // 其他工具
+  };
+  function propPixels(name, frame = 0) {
+    const d = PROPS[name];
+    if (!d) return null;
+    const rows = d.frames[frame % d.frames.length];
+    const list = [];
+    rows.forEach((row, y) => [...row].forEach((ch, x) => { if (PROP_PAL[ch]) list.push([x, y, PROP_PAL[ch]]); }));
+    return { cols: rows[0].length, rows: rows.length, list };
+  }
+
   // 飘起来的小东西（爱心、星星、音符、Z…）也是像素画，跟 Clawd 一个画风
   const PARTICLES = {
     heart: { rows: ['.RR.RR.', 'RWRRRRR', 'RRRRRRR', '.RRRRR.', '..RRR..', '...R...'], pal: { R: '#EF5B6E', W: '#FFD3DA' } },
@@ -258,5 +280,5 @@
     }
   }
 
-  C.sprite = { GRID_W, GRID_H, COLOR, SKINS, CUP_W, CUP_H, PARTICLES, pixels, cupPixels, particlePixels, paint, render, padFor, mix };
+  C.sprite = { GRID_W, GRID_H, COLOR, SKINS, CUP_W, CUP_H, PARTICLES, PROPS, pixels, cupPixels, propPixels, particlePixels, paint, render, padFor, mix };
 })();

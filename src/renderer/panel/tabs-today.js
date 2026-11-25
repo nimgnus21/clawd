@@ -22,7 +22,17 @@
     return '晚上好';
   }
 
-  // Clawd 想说的一句话：跟着三环走
+  // Clawd 想说的一句话：先看 Claude（在等你 / 在干活），再看三环
+  function headline(s) {
+    const sessions = s.sessions || [];
+    const waiting = sessions.find((x) => x.state === 'waiting');
+    if (waiting) return `${waiting.project || 'Claude'} 在等你批准`;
+    const working = sessions.filter((x) => x.state === 'working');
+    if (working.length) return working.length > 1 ? `Claude 在跑 ${working.length} 个任务，趁现在歇一会儿？` : 'Claude 在干活，趁现在喝口水、伸个懒腰？';
+    return moodLine(G(s));
+  }
+
+  // 三环的情况
   function moodLine(g) {
     const closed = (g.rings || []).filter((r) => r.closed).length;
     if (closed >= 3) return '三环全满，今天照顾得太好了 ✻';
@@ -61,6 +71,7 @@
       if (!r) return;
       const p = Math.min(1, r.value / r.goal);
       bar.setAttribute('stroke-dasharray', `${(C * p).toFixed(1)} ${C.toFixed(1)}`);
+      bar.style.opacity = p > 0 ? '1' : '0'; // 0 的时候圆头会画出一个点
       icon.textContent = r.closed ? '✓' : r.icon;
       icon.classList.toggle('done', r.closed);
       value.textContent = '';
@@ -86,7 +97,25 @@
     if (!c.installed) return ['warn', '还没接入 Claude Code'];
     if (!c.listening) return ['err', 'Clawd 的本机服务没有启动'];
     if (c.active) return ['ok', `Claude Code 正在干活（${c.active} 个任务）`];
-    return ['ok', 'Claude Code 已接入，干活时 Clawd 会陪着'];
+    return ['ok', 'Claude Code 已接入，现在没有任务在跑'];
+  }
+
+  const KIND_TEXT = { think: '想一想', read: '翻代码', edit: '改代码', run: '跑命令', test: '跑测试', web: '查资料', todo: '列清单', agent: '派帮手', tool: '用工具' };
+  const mmss = (ms) => {
+    const t = Math.max(0, Math.round(ms / 1000));
+    return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+  };
+
+  // 每个正在跑的会话一行：谁、在干什么、多久了（等批准的标橙）
+  function sessionRow(x) {
+    const now = Date.now();
+    const waiting = x.state === 'waiting';
+    const done = x.state === 'done';
+    const what = waiting ? `等你批准 · ${mmss(now - (x.waitSince || now))}` : done ? '做完了 ✓' : `${x.tool || KIND_TEXT[x.kind] || '干活中'} · ${mmss(now - (x.since || now))}`;
+    return h('div', { class: `cc-session ${x.state}` },
+      h('span', { class: 'dot' }),
+      h('b', {}, x.project || 'Claude Code'),
+      h('span', { class: 'muted' }, what));
   }
 
   function dndLine(s) {
@@ -101,7 +130,7 @@
     order: 10,
     title: '今天',
     icon: 'sun',
-    subtitle: '照顾好自己，Clawd 就开心',
+    subtitle: 'Claude 干活，你休息；Claude 需要你，Clawd 叫你回来',
     badge: (s) => {
       const open = (s.todos || []).filter((t) => !t.done).length;
       return open ? String(open) : '';
@@ -124,11 +153,32 @@
           pic,
           h('div', { class: 'today-hello' },
             h('div', { class: 'today-title' }, text(() => greeting())),
-            text((s) => moodLine(G(s)), { class: 'today-mood' }),
+            text((s) => headline(s), { class: 'today-mood' }),
             h('div', { class: 'pills' },
               text((s) => `Lv.${G(s).level || 1}`, { class: 'pill' }),
               text((s) => `✦ ${G(s).stars || 0}`, { class: 'pill star', title: '合环、连续打卡得到的 ✦，在衣柜里用' }),
               text((s) => `🔥 ${(G(s).streak || {}).count || 0} 天`, { class: 'pill fire', title: '连续打卡天数' }))))));
+
+      // ---- Claude 和你（最重要的放最上面） ----
+      el.append(h('div', { class: 'section' },
+        h('h2', {}, 'Claude 和你'),
+        h('div', { class: 'card' },
+          h('div', { class: 'row' }, h('div', { class: 'label' }, status(ccLine)),
+            h('div', { class: 'ctrl' }, h('button', { class: 'btn small', onclick: () => show('settings:claude') }, '设置'))),
+          live(h('div', { class: 'cc-sessions' }), (s) => [(s.sessions || []).map((x) => [x.id, x.state, x.kind, x.tool]), Math.floor(Date.now() / 1000)], (s) => (s.sessions || []).map(sessionRow)),
+          h('div', { class: 'row' },
+            h('div', { class: 'label' },
+              h('b', {}, 'Claude 干活，你休息'),
+              h('small', {}, 'Claude 跑长任务、你手离开键盘时提醒你喝水活动；你不在时它等你批准，回来第一时间告诉你')),
+            h('div', { class: 'ctrl' }, text((s) => `今天趁空休息了 ${(s.today && s.today.ccBreaks) || 0} 次`, { class: 'chip' }))),
+          h('div', { class: 'row' }, h('div', { class: 'label' }, h('b', {}, '专注计时'), h('small', {}, '专注时 Clawd 在旁边敲键盘，时间算进专注环')),
+            h('div', { class: 'ctrl' },
+              h('button', { class: 'btn small', onclick: () => act('petCommand', 'focus-25').then(() => toast('开始专注 25 分钟')) }, '25 分钟'),
+              h('button', { class: 'btn small', onclick: () => act('petCommand', 'focus-45').then(() => toast('开始专注 45 分钟')) }, '45 分钟'))),
+          h('div', { class: 'row' }, h('div', { class: 'label' }, status(dndLine)),
+            h('div', { class: 'ctrl' },
+              h('button', { class: 'btn small', onclick: () => act('dndManual', 60).then(() => toast('勿扰 1 小时')) }, '勿扰 1 小时'),
+              h('button', { class: 'btn small', onclick: () => act('dndManual', 0) }, '结束'))))));
 
       // ---- 今日三环 ----
       el.append(h('div', { class: 'section' },
@@ -161,21 +211,6 @@
               return `${today}${next}每连续 7 天送一张补签卡，哪天忘了会自动用掉；周末默认休息不算断。`;
             }, { class: 'streak-text' })),
           live(h('div'), (s) => G(s).calendar, (s) => calendar(G(s).calendar || [])))));
-
-      // ---- 陪你干活 ----
-      el.append(h('div', { class: 'section' },
-        h('h2', {}, '陪你干活'),
-        h('div', { class: 'card' },
-          h('div', { class: 'row' }, h('div', { class: 'label' }, status(ccLine)),
-            h('div', { class: 'ctrl' }, h('button', { class: 'btn small', onclick: () => show('settings:claude') }, '设置'))),
-          h('div', { class: 'row' }, h('div', { class: 'label' }, h('b', {}, '专注计时'), h('small', {}, '专注时 Clawd 在旁边敲键盘，时间算进专注环')),
-            h('div', { class: 'ctrl' },
-              h('button', { class: 'btn small', onclick: () => act('petCommand', 'focus-25').then(() => toast('开始专注 25 分钟')) }, '25 分钟'),
-              h('button', { class: 'btn small', onclick: () => act('petCommand', 'focus-45').then(() => toast('开始专注 45 分钟')) }, '45 分钟'))),
-          h('div', { class: 'row' }, h('div', { class: 'label' }, status(dndLine)),
-            h('div', { class: 'ctrl' },
-              h('button', { class: 'btn small', onclick: () => act('dndManual', 60).then(() => toast('勿扰 1 小时')) }, '勿扰 1 小时'),
-              h('button', { class: 'btn small', onclick: () => act('dndManual', 0) }, '结束'))))));
 
       // ---- 待办 ----
       const todo = h('div', { 'data-anchor': 'todo' });

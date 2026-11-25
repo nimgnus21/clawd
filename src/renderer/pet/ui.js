@@ -188,8 +188,9 @@
     return img;
   }
 
-  function particle(ch, cls, xFrac = 0.5) {
-    const r = petEl.getBoundingClientRect();
+  // anchor：从哪只 Clawd 头上飘起来（默认主 Clawd）
+  function particle(ch, cls, xFrac = 0.5, anchor = petEl) {
+    const r = anchor.getBoundingClientRect();
     const name = PARTICLE_OF[ch];
     const img = name && particleImage(name, ch === 'Z');
     let el;
@@ -212,6 +213,34 @@
     el.style.setProperty('--drift', `${Math.round(rand(-14, 18))}px`);
     fxEl.appendChild(el);
     el.addEventListener('animationend', () => el.remove());
+  }
+
+  // ================= 提示音 =================
+  // 不用音频文件，现场合成两三个柔和的音：waiting = 叮咚（等你批准），done = 上扬的三个音（做完了）
+  let actx = null;
+  function chime(kind = 'waiting') {
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === 'suspended') actx.resume();
+      const notes = kind === 'done' ? [523.25, 659.25, 783.99] : [783.99, 1046.5];
+      const t0 = actx.currentTime + 0.02;
+      notes.forEach((f, i) => {
+        const osc = actx.createOscillator();
+        const g = actx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = f;
+        const t = t0 + i * 0.13;
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(0.09, t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0008, t + 0.55);
+        osc.connect(g).connect(actx.destination);
+        osc.start(t);
+        osc.stop(t + 0.6);
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   // 庆祝：从头顶撒一把彩纸
@@ -254,5 +283,6 @@
     clock: { render: renderClock, el: clockEl },
     particle,
     confetti,
+    chime,
   };
 })();

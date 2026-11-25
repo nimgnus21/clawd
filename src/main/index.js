@@ -13,6 +13,7 @@ const { Dnd } = require('./dnd');
 const { Todos } = require('./todos');
 const { SysMon } = require('./sysmon');
 const { Growth } = require('./growth');
+const { Rhythm } = require('./rhythm');
 const catalog = require('./growth-catalog');
 const diary = require('./diary');
 const { Updater, fakeAutoUpdater } = require('./updater');
@@ -42,6 +43,7 @@ let todos;
 let sysmon;
 let growth;
 let updater;
+let rhythm;
 let hiddenByDnd = false;
 let idleOverride = null; // 测试用：假装系统空闲了多少秒
 
@@ -183,6 +185,13 @@ const actions = {
     if (r.ok) actions.setOutfit({ [r.slot]: String(id) });
     return r;
   },
+  // 节奏：聪明提醒、叫你回来、提示音
+  rhythmSet(patch = {}) {
+    const p = {};
+    for (const k of ['smartBreaks', 'recall', 'sound']) if (k in patch) p[k] = !!patch[k];
+    settings.set({ rhythm: { ...rhythm.config(), ...p } });
+    return { ok: true };
+  },
   growthSet(patch = {}) {
     const p = {};
     for (const k of ['weekendRest', 'morning']) if (k in patch) p[k] = !!patch[k];
@@ -201,6 +210,7 @@ const actions = {
   logBreak() {
     if (reminders.status('sit').pending) reminders.ack('sit');
     const count = stats.add('sitBreaks', 1);
+    countCcBreak();
     pet.send('say', `活动 +1 ✓ 今天第 ${count} 次`);
     return { ok: true, count };
   },
@@ -289,6 +299,8 @@ function panelState() {
     todos: todos.list(),
     sys: sysmon.last,
     growth: growth.view(),
+    rhythm: rhythm.status(),
+    sessions: cc.snapshot().sessions,
     diary: diary.recent(stats, growth.log(), settings.get('waterGoal') || 8, 14),
     week: diary.weekRecap(stats, growth.log()),
     history: stats.lastDays(30),
@@ -321,17 +333,44 @@ function wireClaudeCode() {
     }
   });
   cc.start();
+  // 老版本接入的 hooks 缺了新事件（测试结果）：自动补上
+  try {
+    if (cc.upgradeHooks()) log.info('Claude Code hooks upgraded');
+  } catch (err) {
+    log.error('upgrade hooks failed', err);
+  }
 }
 
 // 设置变化后各模块做出反应
 function onSettingsChange(keys) {
   if (keys.includes('size')) pet.resize();
+  // 开关“一个会话一只 Clawd”：马上按新设置重新分配
+  if (keys.includes('claudeCode')) setImmediate(() => pet.send('cc', { kind: 'sessions', ...cc.snapshot() }));
   if (keys.includes('onTop')) pet.setOnTop(settings.get('onTop'));
   if (keys.includes('walk') || keys.includes('climb')) {
     menus.refreshTray();
     if (settings.get('walk')) pet.startFall();
   }
   sendSettings();
+}
+
+// ---------------- 节奏：Claude 干活，你休息；Claude 需要你，Clawd 叫你回来 ----------------
+// Claude 正在干活时你休息了一次（喝水、起来动、护眼）：记一笔，回顾里能看到
+function countCcBreak() {
+  if (cc && cc.runningFor() > 0) stats.add('ccBreaks', 1);
+}
+
+function wireRhythm() {
+  rhythm.on('recap', (r) => {
+    pet.send('recap', r);
+    // 小人藏起来了：用通知说
+    if (!pet.isVisible() && r.waiting.length) notify('Claude 在等你', r.waiting.map((w) => `${w.project} 等了 ${w.minutes} 分钟`).join('，'));
+  });
+  rhythm.on('nudge', (n) => notify(`Claude 等你 ${n.minutes} 分钟了`, `${n.project || 'Claude Code'} 在等你批准`));
+  rhythm.on('sound', (kind) => {
+    if (rhythm.config().sound && !dnd.active()) pet.send('sound', kind);
+  });
+  rhythm.start();
 }
 
 // ---------------- 提醒 ----------------
@@ -343,20 +382,24 @@ const REMINDER_NOTIFY = {
 const REMINDER_STAT = { sit: 'sitBreaks', eye: 'eyeBreaks' };
 
 function wireReminders() {
-  reminders.on('due', (kind) => {
-    pet.send('reminder', { kind, due: true });
+  reminders.on('due', (kind, info = {}) => {
+    pet.send('reminder', { kind, due: true, reason: info.reason || '' });
     // 小人藏起来了就用系统通知提醒
     if (!pet.isVisible() && REMINDER_NOTIFY[kind]) notify(...REMINDER_NOTIFY[kind]());
   });
   reminders.on('clear', (kind, info = {}) => {
     pet.send('reminder', { kind, due: false, away: !!info.away });
     // 提醒之后离开了电脑：也算休息过
-    if (info.away && REMINDER_STAT[kind]) stats.add(REMINDER_STAT[kind], 1);
+    if (info.away && REMINDER_STAT[kind]) {
+      stats.add(REMINDER_STAT[kind], 1);
+      countCcBreak();
+    }
   });
 
   // 页面里处理了提醒（点了小人）
   ipcMain.handle('reminder-done', (_e, kind) => {
     reminders.ack(kind);
+    countCcBreak();
     // 只记统计；三环的进度直接看统计，成长模块自己会去检查
     if (kind === 'water') {
       const count = stats.add('water', 1);
@@ -524,6 +567,7 @@ function start() {
   dnd = new Dnd(settings, () => [pet.win, panel.win].filter((w) => w && !w.isDestroyed()).map((w) => winapi.hwndOf(w)));
   todos = new Todos(data, stats);
   growth = new Growth({ data, settings, stats });
+  rhythm = new Rhythm({ settings, reminders, cc, getIdle, isQuiet: () => dnd.active() });
   updater = new Updater(settings, process.env.CLAWD_TEST && process.env.CLAWD_FAKE_UPDATER ? fakeAutoUpdater(process.env.CLAWD_FAKE_UPDATER) : null);
   sysmon = new SysMon();
   sysmon.on('sample', (smp) => {
@@ -537,6 +581,7 @@ function start() {
   wireClaudeCode();
   wireTodos();
   wireGrowth();
+  wireRhythm();
   wireUpdater();
   settings.on('change', onSettingsChange);
   pet.on('loaded', sendSettings);
@@ -572,7 +617,7 @@ function start() {
   // 自动化测试用：只有设置了 CLAWD_TEST 环境变量才会暴露
   if (process.env.CLAWD_TEST) {
     globalThis.__clawd = {
-      actions, settings, data, stats, pet, reminders, menus, cc, panel, panelState, dnd, winapi, todos, sysmon, growth, updater,
+      actions, settings, data, stats, pet, reminders, menus, cc, panel, panelState, dnd, winapi, todos, sysmon, growth, rhythm, updater,
       setIdle: (n) => { idleOverride = n; },
     };
   }

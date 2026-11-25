@@ -11,8 +11,11 @@ const path = require('path');
 const HOOK_PATH = '/clawd/hook';
 const MAX_BODY = 2 * 1024 * 1024;
 // 任务开始 / 结束 / 等你确认 / 出错 / 会话结束；PreToolUse 用来显示正在用什么工具
+// PostToolUse / PostToolUseFailure（只看 Bash）用来知道测试通过没有（失败时 error 第一行是 “Exit code N”）
 const BASE_EVENTS = ['UserPromptSubmit', 'Stop', 'StopFailure', 'Notification', 'SessionEnd'];
-const TOOL_EVENTS = ['PreToolUse'];
+const TOOL_EVENTS = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure'];
+const TOOL_MATCHER = { PreToolUse: '*', PostToolUse: 'Bash', PostToolUseFailure: 'Bash' };
+const DONE_SHOW_MS = 8000; // 做完的会话再留 8 秒（小 Clawd 庆祝完再走）
 
 function claudeDir() {
   return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
@@ -64,6 +67,32 @@ function toolLabel(name, input) {
   }
 }
 
+// 工具分成几类，小人用不同的动作和道具表现
+//   read 翻书 / edit 敲键盘 / run 挥锤子 / test 跑测试 / web 放大镜 / todo 写字板 / agent 派小帮手 / tool 其他
+const TEST_RE = /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|npx\s+(?:jest|vitest|mocha|playwright\s+test)|pytest|py\.test|jest|vitest|mocha|go\s+test|cargo\s+(?:test|nextest)|dotnet\s+test|phpunit|rspec|ctest|tox|unittest|gradlew?\b[^|;&]*\btest|mvnw?\b[^|;&]*\btest|make\s+test|deno\s+test|swift\s+test|mix\s+test)\b/i;
+function isTestCommand(cmd) {
+  return TEST_RE.test(String(cmd || ''));
+}
+
+function toolKind(name, input) {
+  switch (name) {
+    case 'Read': case 'Grep': case 'Glob': case 'LS': case 'NotebookRead':
+      return 'read';
+    case 'Edit': case 'Write': case 'MultiEdit': case 'NotebookEdit':
+      return 'edit';
+    case 'Bash': case 'PowerShell':
+      return isTestCommand((input || {}).command) ? 'test' : 'run';
+    case 'WebFetch': case 'WebSearch':
+      return 'web';
+    case 'TodoWrite': case 'TaskCreate': case 'TaskUpdate': case 'TaskList':
+      return 'todo';
+    case 'Agent': case 'Task':
+      return 'agent';
+    default:
+      return 'tool';
+  }
+}
+
 // Claude Code 的提示是英文的，常见的几种翻成中文
 function translateMessage(msg) {
   const m = String(msg || '');
@@ -85,7 +114,7 @@ class ClaudeCode extends EventEmitter {
     this.stats = stats;
     this.server = null;
     this.serverError = '';
-    this.sessions = new Map(); // session_id -> { state, cwd, since, tool, toolAt }
+    this.sessions = new Map(); // session_id -> { id, state, cwd, project, first, since, tool, kind, toolAt, waitSince, doneAt, result }
     this.lastEventAt = 0;
   }
 
@@ -194,22 +223,39 @@ class ClaudeCode extends EventEmitter {
     const id = String(e.session_id || 'default');
     const project = basename(e.cwd);
     let s = this.sessions.get(id);
+    const fresh = () => ({ id, state: 'working', cwd: e.cwd || '', project, first: now, since: now, tool: '', kind: 'think', toolAt: now, seen: now, demo: !!e.__demo });
 
     switch (e.hook_event_name) {
       case 'UserPromptSubmit':
-        s = { state: 'working', cwd: e.cwd || '', project, since: now, tool: '', toolAt: now, seen: now };
+        s = { ...fresh(), first: s ? s.first : now };
         this.sessions.set(id, s);
         break;
       case 'PreToolUse':
-        if (!s) s = { state: 'working', cwd: e.cwd || '', project, since: now };
+        if (!s) s = fresh();
         s.state = 'working';
+        s.waitSince = 0;
+        s.doneAt = 0;
         s.tool = toolLabel(e.tool_name, e.tool_input);
+        s.kind = toolKind(e.tool_name, e.tool_input);
         s.toolAt = now;
         s.seen = now;
         this.sessions.set(id, s);
         break;
+      case 'PostToolUse':
+      case 'PostToolUseFailure': {
+        if (!s) break;
+        s.seen = now;
+        const input = e.tool_input || {};
+        if (e.tool_name !== 'Bash' || !isTestCommand(input.command)) break;
+        const failed = e.hook_event_name === 'PostToolUseFailure';
+        // 中途取消的不算；失败要真的跑完退出（Exit code N）
+        if (failed && (e.is_interrupt || !/^Exit code [1-9]/.test(String(e.error || '')))) break;
+        s.result = { ok: !failed, at: now };
+        this.emit('event', { demo: !!e.__demo, type: 'test', ok: !failed, project: s.project, session: id });
+        break;
+      }
       case 'Notification': {
-        if (!s) s = { state: 'idle', cwd: e.cwd || '', project, since: now };
+        if (!s) s = { ...fresh(), state: 'idle' };
         s.seen = now;
         if (e.notification_type === 'idle_prompt') {
           // 已经做完、在等你回复；不算“需要确认”
@@ -218,10 +264,11 @@ class ClaudeCode extends EventEmitter {
           this.emit('event', { type: 'idle', project: s.project, message: e.message || '' });
           break;
         }
+        if (s.state !== 'waiting') s.waitSince = now;
         s.state = 'waiting';
         s.message = translateMessage(e.message);
         this.sessions.set(id, s);
-        this.emit('event', { demo: !!e.__demo, type: 'waiting', project: s.project, message: s.message });
+        this.emit('event', { demo: !!e.__demo, type: 'waiting', project: s.project, message: s.message, session: id });
         break;
       }
       case 'Stop': {
@@ -229,6 +276,9 @@ class ClaudeCode extends EventEmitter {
         if (s) {
           s.state = 'idle';
           s.seen = now;
+          s.doneAt = now;
+          s.waitSince = 0;
+          s.took = took;
         }
         if (!e.__demo) {
           this.stats.add('ccTasks', 1);
@@ -239,13 +289,16 @@ class ClaudeCode extends EventEmitter {
           type: 'done',
           project: (s && s.project) || project,
           took,
+          session: id,
           summary: clip(e.last_assistant_message, 60),
         });
+        // 庆祝完了再发一次快照，让做完的小 Clawd 离开
+        setTimeout(() => this.emit('sessions', this.snapshot()), DONE_SHOW_MS + 200);
         break;
       }
       case 'StopFailure':
-        if (s) s.state = 'idle';
-        this.emit('event', { type: 'error', project: (s && s.project) || project, message: clip(e.last_assistant_message || e.error, 50) });
+        if (s) { s.state = 'idle'; s.waitSince = 0; }
+        this.emit('event', { type: 'error', project: (s && s.project) || project, message: clip(e.last_assistant_message || e.error, 50), session: id });
         break;
       case 'SessionEnd':
         this.sessions.delete(id);
@@ -256,21 +309,31 @@ class ClaudeCode extends EventEmitter {
     this.emit('sessions', this.snapshot());
   }
 
-  // 控制面板上的“演示一遍”：假装跑了一个任务
+  // 控制面板上的“演示一遍”：假装同时跑了两个任务（看小 Clawd 怎么干活、跑测试、等批准、庆祝）
   demo() {
     (this.demoTimers || []).forEach(clearTimeout);
-    const base = { session_id: 'clawd-demo', cwd: '/demo/my-project', __demo: true };
+    const A = { session_id: 'clawd-demo', cwd: '/demo/my-project', __demo: true };
+    const B = { session_id: 'clawd-demo-2', cwd: '/demo/api-server', __demo: true };
     const steps = [
-      [0, { hook_event_name: 'UserPromptSubmit', prompt: 'demo' }],
-      [1600, { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: 'src/app.js' } }],
-      [3200, { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: 'src/app.js' } }],
-      [4800, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { description: 'Run tests' } }],
-      [6400, { hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' }],
-      [10000, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { description: 'Build preview' } }],
-      [11800, { hook_event_name: 'Stop', last_assistant_message: 'Demo done.' }],
-      [12500, { hook_event_name: 'SessionEnd', reason: 'other' }],
+      [0, A, { hook_event_name: 'UserPromptSubmit', prompt: 'demo' }],
+      [1200, A, { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: 'src/app.js' } }],
+      [1800, B, { hook_event_name: 'UserPromptSubmit', prompt: 'demo' }],
+      [2600, B, { hook_event_name: 'PreToolUse', tool_name: 'WebSearch', tool_input: { query: 'express rate limit' } }],
+      [3000, A, { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: 'src/app.js' } }],
+      [4800, A, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'npm test', description: 'Run tests' } }],
+      [5200, B, { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: 'server.js' } }],
+      [6600, A, { hook_event_name: 'PostToolUseFailure', tool_name: 'Bash', tool_input: { command: 'npm test' }, error: 'Exit code 1\n1 failing' }],
+      [7400, A, { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: 'src/app.js' } }],
+      [8000, B, { hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' }],
+      [9000, A, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'npm test', description: 'Run tests' } }],
+      [10600, A, { hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'npm test' }, tool_response: { stdout: 'ok', stderr: '' } }],
+      [11400, A, { hook_event_name: 'Stop', last_assistant_message: 'Demo done.' }],
+      [13000, B, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { description: 'Restart server' } }],
+      [15000, B, { hook_event_name: 'Stop', last_assistant_message: 'Demo done.' }],
+      [24000, A, { hook_event_name: 'SessionEnd', reason: 'other' }],
+      [24000, B, { hook_event_name: 'SessionEnd', reason: 'other' }],
     ];
-    this.demoTimers = steps.map(([ms, e]) => setTimeout(() => this.onEvent({ ...base, ...e }), ms));
+    this.demoTimers = steps.map(([ms, base, e]) => setTimeout(() => this.onEvent({ ...base, ...e }), ms));
   }
 
   sweep() {
@@ -290,22 +353,45 @@ class ClaudeCode extends EventEmitter {
     if (changed) this.emit('sessions', this.snapshot());
   }
 
-  // 发给小人的精简状态：最需要关注的那个会话 + 总数
+  // 发给小人的状态：最需要关注的那个会话 + 总数 + 每个会话（一个会话一只 Clawd）
   snapshot() {
+    const now = Date.now();
+    const tools = this.config().tools;
+    const view = (s) => ({
+      id: s.id,
+      state: s.state === 'idle' ? 'done' : s.state,
+      project: s.project,
+      since: s.since,
+      first: s.first,
+      tool: tools ? s.tool : '',
+      kind: tools ? s.kind || 'think' : 'edit',
+      message: s.message || '',
+      waitSince: s.waitSince || 0,
+      doneAt: s.doneAt || 0,
+      result: s.result && now - s.result.at < 6000 ? s.result : null,
+    });
     const list = [...this.sessions.values()].filter((s) => s.state !== 'idle');
     const rank = { waiting: 2, working: 1 };
     list.sort((a, b) => (rank[b.state] - rank[a.state]) || ((b.toolAt || b.since) - (a.toolAt || a.since)));
     const top = list[0];
+    // 小队：正在干活 / 等批准的，加上刚做完还在庆祝的；按开始的先后排，位置不会乱跳
+    const crew = [...this.sessions.values()]
+      .filter((s) => s.state !== 'idle' || (s.doneAt && now - s.doneAt < DONE_SHOW_MS))
+      .sort((a, b) => (a.first || a.since) - (b.first || b.since))
+      .map(view);
     return {
       active: list.length,
-      top: top ? {
-        state: top.state,
-        project: top.project,
-        since: top.since,
-        tool: this.config().tools ? top.tool : '',
-        message: top.message || '',
-      } : null,
+      top: top ? view(top) : null,
+      sessions: crew,
     };
+  }
+
+  // 正在干活（不是等批准）的会话里，最早开始的那个已经跑了多久（毫秒）；没有就是 0
+  runningFor() {
+    const now = Date.now();
+    let best = 0;
+    for (const s of this.sessions.values()) if (s.state === 'working') best = Math.max(best, now - (s.since || now));
+    return best;
   }
 
   // ---------------- 写入 / 移除 ~/.claude/settings.json 里的 hooks ----------------
@@ -366,12 +452,20 @@ class ClaudeCode extends EventEmitter {
     };
     const events = [...BASE_EVENTS, ...(cfg.tools ? TOOL_EVENTS : [])];
     for (const ev of events) {
-      const group = ev === 'PreToolUse' ? { matcher: '*', hooks: [handler] } : { hooks: [handler] };
+      const group = TOOL_MATCHER[ev] ? { matcher: TOOL_MATCHER[ev], hooks: [handler] } : { hooks: [handler] };
       json.hooks[ev] = [...(Array.isArray(json.hooks[ev]) ? json.hooks[ev] : []), group];
     }
     this.writeClaudeSettings(file, json, text);
     this.emit('status');
     return this.status();
+  }
+
+  // 已经接入、但缺了新版本才有的事件：自动补上（只动我们自己加的那几条，改之前有备份）
+  upgradeHooks() {
+    const st = this.status();
+    if (!st.installed || st.stale || !st.outdated || st.error) return false;
+    this.install();
+    return true;
   }
 
   uninstall() {
@@ -388,6 +482,7 @@ class ClaudeCode extends EventEmitter {
     let installed = false;
     let installedUrl = '';
     let error = '';
+    const ours = new Set();
     try {
       const { json } = this.readClaudeSettings();
       const hooks = (json && json.hooks) || {};
@@ -397,6 +492,7 @@ class ClaudeCode extends EventEmitter {
             if (this.isOurHook(h)) {
               installed = true;
               installedUrl = h.url;
+              ours.add(ev);
             }
           }
         }
@@ -412,6 +508,8 @@ class ClaudeCode extends EventEmitter {
       installed,
       // 装的时候用的端口和现在不一样，需要重新接入
       stale: installed && installedUrl !== this.hookUrl(cfg.port),
+      // 新版本多了几个事件（测试结果等），老的接入缺了
+      outdated: installed && [...BASE_EVENTS, ...(cfg.tools ? TOOL_EVENTS : [])].some((ev) => !ours.has(ev)),
       settingsFile: settingsPath(),
       error,
       lastEventAt: this.lastEventAt,
@@ -420,4 +518,4 @@ class ClaudeCode extends EventEmitter {
   }
 }
 
-module.exports = { ClaudeCode, toolLabel, translateMessage, HOOK_PATH };
+module.exports = { ClaudeCode, toolLabel, toolKind, isTestCommand, translateMessage, HOOK_PATH };

@@ -90,6 +90,87 @@ html, body {
   50%      { transform: rotate(4deg) scale(.98, 1.02); }
 }
 
+/* 测试没过：摔一跤 */
+#pet.trip { animation: trip 1.4s cubic-bezier(.3, .7, .4, 1); }
+@keyframes trip {
+  0%   { transform: none; }
+  15%  { transform: translateY(-4px) rotate(-6deg); }
+  35%  { transform: translateY(0) rotate(8deg) scale(1.08, .86); }
+  60%  { transform: rotate(-3deg) scale(1.04, .94); }
+  100% { transform: none; }
+}
+
+/* ---------- Clawd 小队：一个 Claude Code 会话一只 ---------- */
+#crew { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.worker {
+  position: absolute;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+.worker.enter { animation: workerIn .45s cubic-bezier(.3, 1.4, .5, 1); }
+.worker.leave { animation: workerOut .45s ease-in forwards; }
+@keyframes workerIn {
+  from { opacity: 0; transform: translateY(12px) scale(.6); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes workerOut {
+  to { opacity: 0; transform: translateY(8px) scale(.7); }
+}
+.w-body { position: relative; pointer-events: auto; cursor: pointer; transform-origin: 50% 100%; }
+.w-body::after {
+  content: "";
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 0;
+  height: 8px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(25, 12, 6, .3), rgba(25, 12, 6, 0));
+  transform: translateY(50%);
+  z-index: -1;
+}
+.w-sprite { display: block; }
+.w-prop { position: absolute; left: 100%; display: none; }
+.w-prop.show { display: block; }
+.w-body.hop { animation: jump .62s cubic-bezier(.3, .7, .4, 1) 2; }
+.w-body.trip { animation: trip 1.4s cubic-bezier(.3, .7, .4, 1); }
+.w-chip {
+  margin-bottom: 5px;
+  max-width: 88px;
+  padding: 0 7px;
+  height: 17px;
+  border-radius: 999px;
+  background: rgba(255, 252, 247, .95);
+  color: var(--ink);
+  font: 600 10.5px/17px var(--ui-font);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 0 0 1px var(--line), 0 3px 8px -3px rgba(40, 20, 10, .3);
+  pointer-events: auto;
+  cursor: default;
+}
+.w-chip.wait { background: #E8901A; color: #fff; box-shadow: 0 0 0 1px rgba(150, 80, 0, .3), 0 3px 10px -2px rgba(200, 110, 10, .5); animation: chipPulse 1.2s ease-in-out infinite; }
+.w-chip.done { background: #3A9E5F; color: #fff; }
+@keyframes chipPulse {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-2px); }
+}
+.crew-more {
+  position: absolute;
+  bottom: 10px;
+  padding: 0 6px;
+  height: 16px;
+  border-radius: 999px;
+  background: rgba(38, 38, 36, .8);
+  color: #fff;
+  font: 600 10px/16px var(--ui-font);
+}
+.crew-more.hidden { display: none; }
+
 /* ---------- 脚下的影子 ---------- */
 #shadow {
   position: absolute;
@@ -274,4 +355,5 @@ body.quiet #bubble,
 body.quiet #clock,
 body.quiet #fx { display: none; }
 body.quiet #pet,
-body.quiet #shadow { opacity: .35; }
+body.quiet #shadow,
+body.quiet #crew { opacity: .35; }

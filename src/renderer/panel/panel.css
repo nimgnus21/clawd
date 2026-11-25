@@ -477,3 +477,14 @@ textarea { height: auto; padding: 8px 10px; resize: vertical; }
 .part-desc { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; }
 .part > .section:first-of-type { margin-top: 12px; }
 .todo-add-card { margin-bottom: 8px; }
+
+/* 今天 → 陪你干活：每个 Claude Code 会话一行 */
+.cc-sessions:empty { display: none; }
+.cc-sessions { display: flex; flex-direction: column; gap: 6px; padding: 2px 18px 12px 18px; }
+.cc-session { display: grid; grid-template-columns: 10px auto 1fr; align-items: center; gap: 8px; font-size: 13px; }
+.cc-session .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+.cc-session.waiting .dot { background: #E8901A; box-shadow: 0 0 0 3px rgba(232, 144, 26, .2); }
+.cc-session.waiting b { color: #B56A08; }
+.cc-session.done .dot { background: var(--muted); }
+.cc-session .muted { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-color-scheme: dark) { .cc-session.waiting b { color: #f0b45a; } }

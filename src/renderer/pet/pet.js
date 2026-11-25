@@ -6,6 +6,8 @@
   const { sprite, ui } = C;
   const { LINES, FOCUS_VERBS, rand, pick, greeting, clickLine, hourLine, mmss } = C.lines;
   const { bubble, clock, particle, confetti } = ui;
+  const { ccLook } = C;
+  const crew = C.crew;
 
   // 在 Electron 里用 preload 暴露的 API；直接用浏览器打开页面时用一个假的，方便预览
   const api = window.clawd || createMockApi();
@@ -47,7 +49,7 @@
     root.style.setProperty('--pw', `${w}px`);
     root.style.setProperty('--ph', `${h}px`);
     root.style.setProperty('--pad', `${pad}px`);
-    sizeCanvas(propEl, sprite.CUP_W * scale, sprite.CUP_H * scale);
+    crew.setScale(scale, dpr);
     sizeCanvas(hatEl, outfits.HAT_W * scale, outfits.HAT_H * scale);
     lastPoseKey = '';
     lastPropKey = '';
@@ -173,20 +175,27 @@
     renderTo(ctx, sprite.GRID_W, sprite.GRID_H, sprite.pixels(p));
   }
 
-  // prop: null（不拿东西）或水杯 { level, bottom }，bottom 以像素格为单位
+  // prop: null（不拿东西）、水杯 { level, bottom } 或 Claude Code 的道具 { art, frame, bottom }；bottom 以像素格为单位
   function drawProp(prop) {
-    const key = prop ? `${prop.level}|${prop.bottom}|${scale}|${dpr}` : 'none';
+    const key = prop ? `${prop.art || 'cup'}|${prop.art ? prop.frame : prop.level}|${prop.bottom}|${scale}|${dpr}` : 'none';
     if (key === lastPropKey) return;
     lastPropKey = key;
     propEl.classList.toggle('show', !!prop);
     if (!prop) return;
     propEl.style.bottom = `${prop.bottom * scale}px`;
-    renderTo(propCtx, sprite.CUP_W, sprite.CUP_H, sprite.cupPixels(prop.level));
+    if (prop.art) {
+      const art = sprite.propPixels(prop.art, prop.frame);
+      sizeCanvas(propEl, art.cols * scale, art.rows * scale);
+      renderTo(propCtx, art.cols, art.rows, art.list);
+    } else {
+      sizeCanvas(propEl, sprite.CUP_W * scale, sprite.CUP_H * scale);
+      renderTo(propCtx, sprite.CUP_W, sprite.CUP_H, sprite.cupPixels(prop.level));
+    }
   }
 
   // ================= 状态 =================
   const SLEEP_AFTER_S = 90; // 电脑空闲多久后睡觉
-  const TIMED_MODES = ['react', 'dance', 'drink', 'stretch', 'yawn', 'wave', 'sit', 'sulk']; // 到时间自动回到 idle 的模式
+  const TIMED_MODES = ['react', 'dance', 'drink', 'stretch', 'yawn', 'wave', 'sit', 'sulk', 'trip']; // 到时间自动回到 idle 的模式
   const IDLE_ACTS = ['yawn', 'wave', 'sit', 'sulk']; // 闲着时的小动作：有正事就马上停
   const EYE_REST_MS = 20000;
 
@@ -232,9 +241,10 @@
   function setMode(mode, ms = 0) {
     S.mode = mode;
     S.modeUntil = performance.now() + ms;
-    petEl.classList.remove('jump', 'dance', 'wiggle', 'land', 'stretch');
+    petEl.classList.remove('jump', 'dance', 'wiggle', 'land', 'stretch', 'trip');
     void petEl.offsetWidth; // 重启 CSS 动画
     if (mode === 'react') petEl.classList.add('jump');
+    if (mode === 'trip') petEl.classList.add('trip');
     if (mode === 'dance') petEl.classList.add('dance');
     if (mode === 'drag') petEl.classList.add('wiggle');
     if (mode === 'stretch' || mode === 'yawn') petEl.classList.add('stretch');
@@ -292,6 +302,12 @@
     },
   };
 
+  const CC_BREAK_LINES = {
+    water: ['Claude 还在跑，趁现在喝杯水？💧', '等 Claude 的空档，去接杯水吧'],
+    sit: ['Claude 在忙，起来走两步？', '趁 Claude 干活，站起来伸个懒腰'],
+    eye: ['Claude 在跑，看看远处 20 秒？'],
+  };
+
   // 现在要显示哪个提醒（专注时、睡觉时、正在处理提醒时先不打扰）
   function activeReminder() {
     if (S.focus || ['sleep', 'drink', 'stretch', 'eyeRest'].includes(S.mode)) return null;
@@ -312,7 +328,9 @@
       return;
     }
     const view = REMINDERS[d.kind];
-    S.reminders[d.kind] = { line: view.line(), lastNag: performance.now() };
+    // 趁 Claude 在跑的时候提醒：换一句话
+    const line = d.reason === 'cc' && CC_BREAK_LINES[d.kind] ? pick(CC_BREAK_LINES[d.kind]) : view.line();
+    S.reminders[d.kind] = { line, lastNag: performance.now(), reason: d.reason || '' };
     if (activeReminder() === d.kind && S.mode === 'idle') {
       bump('jump');
       particle(view.nag, 'drop', 0.9);
@@ -410,10 +428,30 @@
     return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
   }
 
+  // 一个会话一只 Clawd（设置里可以关；关了就只有主 Clawd，显示最需要关注的那个会话）
+  const crewOn = () => !(S.settings.claudeCode && S.settings.claudeCode.crew === false);
+
+  // 跑测试的结果：通过蹦一下，没过摔一跤（轻松一点，测试挂掉是常事）
+  function testReaction(ok) {
+    if (S.mode === 'sleep') wakeUp();
+    if (ok) {
+      setMode('react', 650);
+      for (let i = 0; i < 3; i++) setTimeout(() => particle('✓', 'spark', rand(0.2, 0.8)), i * 140);
+      bubble.say(pick(ccLook.TEST_PASS), 2200);
+    } else {
+      setMode('trip', 1400);
+      particle('!', 'drop', 0.6);
+      bubble.say(pick(ccLook.TEST_FAIL), 2600);
+    }
+  }
+
   function onCC(d = {}) {
     if (d.kind === 'sessions') {
       const wasWaiting = ccWaiting();
-      S.cc = { active: d.active || 0, top: d.top || null };
+      // 没带会话列表的快照（老格式）：按以前的方式，主 Clawd 显示最需要关注的那个
+      const mine = crewOn() && Array.isArray(d.sessions) ? crew.assign(d.sessions, true) : (crew.assign([], false), d.top || null);
+      // 主 Clawd 的会话做完了（快照里还留着几秒给小队庆祝）：不再算干活
+      S.cc = { active: d.active || 0, top: mine && mine.state !== 'done' ? mine : null, sessions: d.sessions || [] };
       if (ccWaiting() && !wasWaiting) {
         // 正在庆祝（合环、打卡…）：先让位给“等你批准”，庆祝放回队列，批准完再说
         if (S.announcing && performance.now() < S.announcing.until) {
@@ -431,6 +469,12 @@
       return;
     }
     if (d.kind !== 'event') return;
+    // 小队里某只的事：交给它自己表现
+    if (crewOn() && d.session && d.session !== crew.mainId() && crew.onEvent(d)) return;
+    if (d.type === 'test') {
+      testReaction(d.ok);
+      return;
+    }
     if (d.type === 'done') {
       if (S.mode === 'sleep') wakeUp();
       setMode('react', 650);
@@ -885,6 +929,11 @@
       }
       case 'sulk':
         return { eyes: 'sad', look: 0, breath: 'sulk' };
+      case 'trip': {
+        // 测试没过：摔一跤，先吃惊再委屈
+        const t = 1 - Math.max(0, S.modeUntil - now) / 1400;
+        return t < 0.4 ? { eyes: 'wide', armL: 'up', armR: 'up', squish: true } : { eyes: 'sad', sweat: true, squish: true };
+      }
       case 'sit':
         return { sit: true, eyes: blink ? 'blink' : (now < S.lookUpUntil ? 'up' : 'open'), look: S.look, breath: 'sit' };
       case 'eyeRest': {
@@ -931,12 +980,15 @@
     if (lowBattery() && !S.focus && !ccWorking()) {
       return { eyes: 'blink', breath: 'tired' };
     }
-    if (S.focus || ccWorking()) {
+    // Claude Code 干活：按正在用的工具换动作（翻书、敲键盘、挥锤子…）
+    if (ccWorking()) return ccLook.pose(S.cc.top.kind || 'think', now, eyes);
+    if (S.focus) {
       // 专注时两只手交替敲键盘
       const f = Math.floor(now / 160) % 2;
       return { eyes, armL: f ? 'mid' : 'down', armR: f ? 'down' : 'mid' };
     }
-    const sad = (S.settings.mood == null ? 70 : S.settings.mood) < 30 && eyes === 'open' && Math.floor(now / 4000) % 3 === 0;
+    // 心情不好时偶尔露出委屈的眼神；但你的鼠标在它头顶时，先抬头看你
+    const sad = (S.settings.mood == null ? 70 : S.settings.mood) < 30 && eyes === 'open' && now >= S.lookUpUntil && Math.floor(now / 4000) % 3 === 0;
     return { eyes: sad ? 'sad' : (eyes === 'open' && now < S.lookUpUntil ? 'up' : eyes), look: S.look, breath: 'idle' };
   }
 
@@ -948,6 +1000,8 @@
     }
     const rem = activeReminder();
     if (rem && REMINDERS[rem].prop && S.mode === 'idle' && !S.walking) return REMINDERS[rem].prop(pose);
+    // Claude Code 干活时手里拿着对应的道具
+    if (!rem && ccWorking() && S.mode === 'idle' && !S.walking && !ccWaiting()) return ccLook.prop(S.cc.top.kind, now);
     return null;
   }
 
@@ -955,7 +1009,9 @@
   bubble.setPersistent((now) => {
     const top = S.cc.top;
     if (ccWaiting()) {
-      return { glyph: '!', text: top.message || 'Claude Code 等你确认', dim: top.project };
+      // 已经等了多久
+      const waited = top.waitSince ? ` · ${mmss(Date.now() - top.waitSince)}` : '';
+      return { glyph: '!', text: top.message || 'Claude Code 等你确认', dim: `${top.project || ''}${waited}` };
     }
     if (S.mode === 'eyeRest') {
       return { glyph: '👀', text: '看看远处…', dim: `${Math.max(0, Math.ceil((S.modeUntil - now) / 1000))}s` };
@@ -969,10 +1025,11 @@
       };
     }
     if (ccWorking()) {
-      const more = S.cc.active > 1 ? ` +${S.cc.active - 1}` : '';
+      // 小队开着时每个会话都有自己的 Clawd，不用再写 “+N”
+      const more = !crewOn() && S.cc.active > 1 ? ` +${S.cc.active - 1}` : '';
       return {
         glyph: bubble.spinnerGlyph(now),
-        text: top.tool || 'Clauding…',
+        text: top.tool || `${ccLook.KIND_TEXT[top.kind] || 'Clauding'}…`,
         dim: `${mmss(Date.now() - top.since)}${more}`,
       };
     }
@@ -1091,7 +1148,8 @@
     return inRect(petEl.getBoundingClientRect(), x, y, 3)
       || (bubble.visible && inRect(bubble.el.getBoundingClientRect(), x, y, 2))
       || (!clock.el.classList.contains('hidden') && inRect(clock.el.getBoundingClientRect(), x, y, 2))
-      || (propEl.classList.contains('show') && inRect(propEl.getBoundingClientRect(), x, y, 2));
+      || (propEl.classList.contains('show') && inRect(propEl.getBoundingClientRect(), x, y, 2))
+      || crew.hit(x, y);
   }
 
   window.addEventListener('mousemove', (e) => {
@@ -1133,14 +1191,15 @@
   // ================= 成长：公告队列 =================
   // 公告队列：几句话一句一句说，不互相顶掉
   S.announces = [];
-  function announce(text, { celebrate = false, delay = 800, ms = 5200, glyph = '' } = {}) {
-    S.announces.push({ text, celebrate, ms, glyph, notBefore: performance.now() + delay });
+  // urgent：Claude 等批准时也照样说（比如“欢迎回来”的小结，里面本来就写着谁在等你）
+  function announce(text, { celebrate = false, delay = 800, ms = 5200, glyph = '', urgent = false } = {}) {
+    S.announces.push({ text, celebrate, ms, glyph, urgent, notBefore: performance.now() + delay });
   }
 
   function playAnnouncement(now) {
     const a = S.announces[0];
     // Claude Code 等你批准时不抢气泡，批准完再庆祝
-    if (!a || now < a.notBefore || bubble.busy() || ccWaiting()) return;
+    if (!a || now < a.notBefore || bubble.busy() || (ccWaiting() && !a.urgent)) return;
     if (!['idle', 'react', 'dance', 'sleep', 'sit', 'wave', 'yawn', 'stretch', 'sulk'].includes(S.mode) || S.walking) return;
     if (S.mode === 'sleep') wakeUp();
     S.announces.shift();
@@ -1241,6 +1300,20 @@
   api.on('sys', onSys);
   // 成长的好消息：等手上这句话说完再宣布（比如喝水合环，先说“咕嘟咕嘟”）
   api.on('growth', onGrowth);
+  // 你离开电脑回来了：Claude 这段时间做了什么、谁在等你
+  api.on('recap', (r = {}) => {
+    const lines = [`欢迎回来！离开了 ${r.minutes} 分钟`];
+    for (const x of r.done || []) lines.push(`✓ ${x.project || 'Claude'} ${x.count > 1 ? `做完 ${x.count} 个` : '做完了'}${x.minutes ? ` · ${x.minutes} 分钟` : ''}`);
+    for (const x of r.tests || []) lines.push(x.ok ? `✓ ${x.project} 测试通过` : `✗ ${x.project} 测试没过`);
+    for (const x of r.errors || []) lines.push(`✗ ${x.project || 'Claude'} 出错了`);
+    for (const x of r.waiting || []) lines.push(`! ${x.project || 'Claude'} 等你批准${x.minutes ? ` · ${x.minutes} 分钟` : ''}`);
+    if (S.mode === 'sleep') wakeUp();
+    // 你不在时说的话（“做完了”之类）你没看到，小结里都有：直接换成小结
+    bubble.hush();
+    S.announces.unshift({ text: lines.join('\n'), glyph: '👋', ms: Math.min(12000, 4000 + lines.length * 1500), urgent: true, notBefore: 0 });
+  });
+  // 提示音（Claude 等你批准 / 你不在时做完了）
+  api.on('sound', (kind) => ui.chime(kind));
   // 勿扰的“安静”模式：变淡、不说话
   api.on('quiet', (on) => document.body.classList.toggle('quiet', !!on));
   api.on('say', (text) => {
@@ -1281,12 +1354,15 @@
     applyBreath(now, pose);
     drawProp(currentProp(now, pose));
     drawShadow();
+    crew.setSkin(skinId());
+    crew.render(now);
     bubble.render(now);
     const gs = S.settings.growth || {};
     clock.render(S.settings.clock !== false, gs.streak || 0, gs.rings || null);
     requestAnimationFrame(loop);
   }
 
+  crew.onReport((n) => { if (api.setCrew) api.setCrew(n); });
   resizeCanvas();
   requestAnimationFrame(loop);
   // 拿到设置（生日等）之后再打招呼，免得节日问候被普通问候顶掉
@@ -1331,6 +1407,9 @@
     drink,
     onGrowth,
     skinId,
+    crew,
+    testReaction,
+    activeReminder,
   };
 
   // ================= 浏览器预览用的假 API =================
@@ -1345,6 +1424,7 @@
       dragEnd() {},
       moveBy: async () => ({ edge: 0 }),
       climb: async () => ({ ok: false }),
+      setCrew() {},
       fall() { setTimeout(() => emit('landed', { impact: 10 }), 200); },
       setIgnore() {},
       contextMenu() {},

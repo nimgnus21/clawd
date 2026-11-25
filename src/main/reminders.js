@@ -27,6 +27,9 @@ class Reminders extends EventEmitter {
     this.suppressed = false;
     this.timer = null;
     this.lastCheck = Date.now();
+    // 时机判断（rhythm.js 设置）：到点了要不要现在就提醒。返回 { ok, reason }
+    // reason = 'cc' 表示“Claude 在跑、你手闲着”这种好时机
+    this.gate = () => ({ ok: true });
   }
 
   interval(kind) {
@@ -81,15 +84,37 @@ class Reminders extends EventEmitter {
           continue;
         }
         if (idle < ACTIVE_IDLE_SEC) st.active += dt;
-        if (!st.pending && !this.suppressed && st.active >= m * 60) {
-          st.pending = true;
-          this.emit('due', k);
-        }
+        if (!st.pending && !this.suppressed && st.active >= m * 60) this.tryFire(k, st.active - m * 60);
       } else if (!this.suppressed && st.due && !st.pending && now >= st.due) {
-        st.pending = true;
-        this.emit('due', k);
+        this.tryFire(k, (now - st.due) / 1000);
       }
     }
+  }
+
+  // 到点了：问一下时机对不对（你正专心操作时最多推迟一会儿）
+  tryFire(kind, overdueSec) {
+    const g = this.gate(kind, overdueSec) || { ok: true };
+    if (!g.ok) return false;
+    this.fire(kind, g.reason || '');
+    return true;
+  }
+
+  fire(kind, reason = '') {
+    const st = this.state[kind];
+    if (!st || st.pending || !this.interval(kind)) return;
+    st.pending = true;
+    st.reason = reason;
+    this.emit('due', kind, { reason });
+  }
+
+  // 还有多少秒到点（已经到点 / 关闭时返回 0 / Infinity）
+  secondsLeft(kind) {
+    const st = this.state[kind];
+    const m = this.interval(kind);
+    if (!st || !m) return Infinity;
+    if (st.pending) return 0;
+    if (ACTIVITY[kind]) return Math.max(0, m * 60 - (st.active || 0));
+    return Math.max(0, ((st.due || 0) - Date.now()) / 1000);
   }
 
   // 用户处理了提醒（喝了水、伸了懒腰…），重新计时
@@ -108,7 +133,7 @@ class Reminders extends EventEmitter {
   status(kind) {
     const st = this.state[kind] || { pending: false };
     const interval = this.interval(kind);
-    const out = { pending: !!st.pending, interval, paused: this.suppressed, activity: !!ACTIVITY[kind] };
+    const out = { pending: !!st.pending, interval, paused: this.suppressed, activity: !!ACTIVITY[kind], reason: st.pending ? st.reason || '' : '' };
     if (ACTIVITY[kind]) {
       out.active = Math.round(st.active || 0);
       out.remaining = interval ? Math.max(0, Math.round(interval * 60 - (st.active || 0))) : 0;

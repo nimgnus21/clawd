@@ -64,6 +64,12 @@ function entry(day, stat = {}, log = {}, waterGoal = 8) {
     score += 1;
   }
 
+  const ccBreaks = stat.ccBreaks || 0;
+  if (ccBreaks > 0) {
+    lines.push(pickOne(rnd, [`趁 Claude 干活的时候休息了 ${ccBreaks} 次，会摸鱼才会干活 ✻`, `Claude 在跑的时候你去歇了 ${ccBreaks} 次，节奏刚刚好`]));
+    score += 1;
+  }
+
   const todos = stat.todosDone || 0;
   if (todos > 0) {
     lines.push(todos > 1 ? `划掉了 ${todos} 件待办，效率满分 ✅` : '划掉了一件待办 ✅');
@@ -123,6 +129,7 @@ function weekRecap(stats, log = {}) {
     { key: 'water', label: '💧 喝水', unit: '杯', now: sum(cur, 'water'), before: sum(prev, 'water') },
     { key: 'breaks', label: '🚶 活动', unit: '次', now: sum(cur, 'sitBreaks') + sum(cur, 'eyeBreaks'), before: sum(prev, 'sitBreaks') + sum(prev, 'eyeBreaks') },
     { key: 'focus', label: '⏱ 专注', unit: '分钟', now: sum(cur, 'focusMinutes') + Math.round(sum(cur, 'ccSeconds') / 60), before: sum(prev, 'focusMinutes') + Math.round(sum(prev, 'ccSeconds') / 60) },
+    { key: 'ccBreaks', label: '☕ 趁 Claude 跑时休息', unit: '次', now: sum(cur, 'ccBreaks'), before: sum(prev, 'ccBreaks') },
     { key: 'todo', label: '完成待办', unit: '件', now: sum(cur, 'todosDone'), before: sum(prev, 'todosDone') },
     { key: 'cc', label: 'Claude Code 任务', unit: '个', now: sum(cur, 'ccTasks'), before: sum(prev, 'ccTasks') },
     { key: 'checkin', label: '打卡', unit: '天', now: sumLog(cur, (e) => (e.checkin ? 1 : 0)), before: sumLog(prev, (e) => (e.checkin ? 1 : 0)) },

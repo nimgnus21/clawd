@@ -25,6 +25,7 @@ class PetWindow extends EventEmitter {
     this.stand = null; // 现在站在哪个窗口上 { hwnd, left, top }（hwnd 0 = 任务栏）
     this.jumpTimer = null;
     this.rideTimer = null;
+    this.crew = 0; // 旁边站了几只小 Clawd（一个 Claude Code 会话一只）
     this.registerIpc();
   }
 
@@ -35,8 +36,19 @@ class PetWindow extends EventEmitter {
 
   size(size) {
     const s = this.scale(size);
-    // 上方留出对话气泡和跳跃的空间
-    return { width: Math.max(240, GRID_W * s + 80), height: GRID_H * s + 150 };
+    // 上方留出对话气泡和跳跃的空间；小队左右交替站，两边各留出位置
+    const ws = Math.max(3, s - 1);
+    const slot = Math.max(84, GRID_W * ws + 20);
+    const crewW = Math.ceil(this.crew / 2) * slot * 2;
+    return { width: Math.max(240, GRID_W * s + 80 + crewW), height: GRID_H * s + 150 };
+  }
+
+  // 小队人数变了：窗口加宽 / 变窄，主 Clawd 位置不动
+  setCrew(n) {
+    const c = Math.max(0, Math.min(3, Math.round(Number(n) || 0)));
+    if (c === this.crew) return;
+    this.crew = c;
+    this.resize();
   }
 
   spriteWidth() {
@@ -284,6 +296,8 @@ class PetWindow extends EventEmitter {
         nodeIntegration: false,
         sandbox: true,
         backgroundThrottling: false,
+        // 提示音（Claude 等你批准）不需要先点一下页面
+        autoplayPolicy: 'no-user-gesture-required',
       },
     });
 
@@ -426,6 +440,10 @@ class PetWindow extends EventEmitter {
     });
 
     ipcMain.handle('climb', (e) => (this.fromPet(e) ? this.climb() : { ok: false }));
+
+    ipcMain.on('set-crew', (e, n) => {
+      if (this.fromPet(e)) this.setCrew(n);
+    });
 
     ipcMain.on('set-ignore', (e, ignore) => {
       if (IS_LINUX || !this.fromPet(e)) return;

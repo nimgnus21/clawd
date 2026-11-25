@@ -160,6 +160,7 @@
     if (!c.listening) return ['err', c.serverError || '本机服务没有启动'];
     if (!c.installed) return ['warn', '还没接入 Claude Code'];
     if (c.stale) return ['warn', '端口改过，需要重新接入'];
+    if (c.outdated) return ['warn', '有新功能（测试结果），点「重新接入」补上'];
     if (c.active) return ['ok', `已接入 · ${c.active} 个任务进行中`];
     return ['ok', '已接入'];
   }
@@ -171,6 +172,7 @@
     desc: 'Claude Code 干活时 Clawd 陪着敲键盘，做完了跳起来喊你，等你批准时举手；干活的时间也算进专注环',
     render(el) {
       const cfg = (s) => S(s).claudeCode || {};
+      const rh = (s) => ((s.rhythm && s.rhythm.config) || {});
       el.append(
         section('状态',
           h('div', { class: 'hero' },
@@ -197,8 +199,17 @@
             number((s) => cfg(s).notifyMinSec, (v) => act('ccSet', { notifyMinSec: v }), { min: 0, max: 3600, suffix: '秒' })),
           row('本机端口', '一般不用改；改了之后要重新接入',
             number((s) => cfg(s).port, (v) => act('ccSet', { port: v }), { min: 1024, max: 65535 }))),
+        section('Claude 干活，你休息',
+          row('一个会话一只 Clawd', '同时开几个 Claude Code，旁边就多几只小 Clawd，头顶写项目名，各干各的（最多再来 3 只）',
+            toggle((s) => cfg(s).crew !== false, (v) => act('ccSet', { crew: v }))),
+          row('趁 Claude 跑的时候提醒休息', '喝水、活动、护眼到点时：你正在操作就先等等（最多 10 分钟）；Claude 跑长任务、你手离开键盘时提前提醒',
+            toggle((s) => rh(s).smartBreaks !== false, (v) => act('rhythmSet', { smartBreaks: v }))),
+          row('叫你回来', '离开电脑时记下 Claude 做了什么、谁在等你；回来时告诉你。等批准 2 分钟、10 分钟各再提醒一次',
+            toggle((s) => rh(s).recall !== false, (v) => act('rhythmSet', { recall: v }))),
+          row('提示音', 'Claude 等你批准、或者你不在时做完了，轻轻响一声（勿扰时不响）',
+            toggle((s) => rh(s).sound !== false, (v) => act('rhythmSet', { sound: v })))),
         section('试一试',
-          row('演示一遍', '假装 Claude Code 跑了一个任务，看看 Clawd 的反应', button('开始演示', () => act('ccDemo'))),
+          row('演示一遍', '假装同时跑了两个任务：看小 Clawd 怎么翻代码、跑测试、等批准、庆祝', button('开始演示', () => act('ccDemo'))),
           row('打开设置文件位置', null, button('打开文件夹', () => act('ccReveal')))),
         h('p', { class: 'muted', style: 'font-size:12.5px' },
           '提示：如果你在 WSL 里用 Claude Code，需要在 WSL 的 ~/.claude/settings.json 里手动加 hooks，地址用 Windows 主机的 IP。没开 Clawd 时 Claude Code 可能会显示一行 “hook error”，不影响使用。'),
